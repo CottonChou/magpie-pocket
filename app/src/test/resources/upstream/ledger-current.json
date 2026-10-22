@@ -1,0 +1,25 @@
+{
+  "period": "today",
+  "offset": 0,
+  "total": 1,
+  "rows": [
+    {
+      "route_id": 101,
+      "t": "2026-10-22T09:59:55Z",
+      "agent": "codex",
+      "provider": "vendor",
+      "providerAccount": "account-a",
+      "model": "model-a",
+      "req": "group/coding",
+      "served": "model-a",
+      "in": 100,
+      "out": 50,
+      "cache_read": 200,
+      "cache_write": 0,
+      "reasoning": 10,
+      "ms": 3000,
+      "ttft_ms": 800,
+      "status": 200
+    }
+  ]
+}

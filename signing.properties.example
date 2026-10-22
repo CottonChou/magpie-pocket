@@ -1,0 +1,6 @@
+# Copy to signing.properties (ignored by Git); use your own private signing key.
+# Relative paths resolve from the repository root. Do not commit real credentials.
+storeFile=/absolute/path/to/your-release-key.jks
+storePassword=replace-with-your-store-password
+keyAlias=replace-with-your-key-alias
+keyPassword=replace-with-your-key-password

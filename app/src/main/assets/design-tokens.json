@@ -1,0 +1,144 @@
+{
+  "product": "Magpie Pocket",
+  "version": "1.0",
+  "units": {
+    "layout": "dp",
+    "typography": "sp",
+    "duration": "ms"
+  },
+  "colors": {
+    "light": {
+      "background": "#F6F7FB",
+      "surface": "#FFFFFF",
+      "textPrimary": "#202330",
+      "textSecondary": "#6D7283",
+      "divider": "#E8EAF1",
+      "accent": "#5E59D9",
+      "accentSurface": "#EEEDFC",
+      "success": "#237A61",
+      "warning": "#986116",
+      "error": "#BD4852",
+      "glassTint": "#FFFFFF",
+      "glassAlpha": 0.74
+    },
+    "dark": {
+      "background": "#101217",
+      "surface": "#1A1E26",
+      "textPrimary": "#EEF0F6",
+      "textSecondary": "#A5ACBC",
+      "divider": "#2D3340",
+      "accent": "#B0AAFF",
+      "accentSurface": "#2C2947",
+      "success": "#7AD7B5",
+      "warning": "#F3BF71",
+      "error": "#FF969F",
+      "glassTint": "#272C3A",
+      "glassAlpha": 0.82
+    }
+  },
+  "spacing": [
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    32
+  ],
+  "layout": {
+    "referenceWidth": 390,
+    "minimumTestWidth": 320,
+    "pagePadding": 20,
+    "compactPagePadding": 16,
+    "touchTargetMinimum": 48,
+    "navigationHeight": 68,
+    "navigationHorizontalMargin": 16,
+    "navigationBottomGapAboveInset": 8,
+    "contentExtraBottomPadding": 16,
+    "twoPaneThreshold": 600
+  },
+  "radius": {
+    "dataPanel": 24,
+    "selector": 20,
+    "search": 20,
+    "bottomNavigation": 32,
+    "sheetTop": 28
+  },
+  "typography": {
+    "pageTitle": {
+      "size": 28,
+      "weight": 600
+    },
+    "heroMetric": {
+      "size": 36,
+      "weight": 550
+    },
+    "inlineMetric": {
+      "size": 24,
+      "weight": 550
+    },
+    "body": {
+      "size": 14,
+      "weight": 400
+    },
+    "label": {
+      "size": 12,
+      "weight": 500
+    },
+    "navigation": {
+      "size": 12,
+      "weight": 500
+    }
+  },
+  "icons": {
+    "regular": 22,
+    "range": [
+      20,
+      24
+    ],
+    "placeholderBrand": "bird",
+    "productionBrandRequiresLicenseReview": true
+  },
+  "glass": {
+    "defaultMode": "clear",
+    "clear": {
+      "minimumApi": 31,
+      "blurRadius": 22
+    },
+    "tinted": {
+      "blurRadiusRange": [
+        8,
+        16
+      ],
+      "alphaRange": [
+        0.9,
+        0.96
+      ]
+    },
+    "solid": {
+      "blurRadius": 0,
+      "alpha": 1.0
+    },
+    "maximumActiveScreenFractionTarget": 0.25,
+    "neverBlurForeground": true
+  },
+  "motion": {
+    "tabDurationRange": [
+      180,
+      240
+    ],
+    "sheetDurationRange": [
+      220,
+      280
+    ],
+    "pressedScaleMinimum": 0.98,
+    "respectReducedMotion": true
+  },
+  "displayRules": {
+    "quotaWarningUsedRatio": 0.85,
+    "accountMaskingDefault": true,
+    "missingNumericValue": null,
+    "ttftDefaultStatistic": "arithmetic_mean",
+    "rerouteCounterUnit": "handoff_count"
+  }
+}

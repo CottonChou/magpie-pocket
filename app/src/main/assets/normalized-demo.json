@@ -1,0 +1,538 @@
+{
+  "contract": "magpie-pocket-normalized-demo",
+  "version": "1.0",
+  "notice": "全部为合成演示数据；不是 Magpie HTTP 响应；汇总为全范围数据，requests 只是少量展示样本。",
+  "connection": {
+    "id": "demo-main",
+    "name": "主网关",
+    "mode": "DEMO",
+    "baseUrl": null,
+    "authentication": "DEMO_NO_CREDENTIALS",
+    "serverReadOnlyPermissionConfirmed": false
+  },
+  "capabilities": {
+    "trace": true,
+    "history": true,
+    "requestDetail": true,
+    "usage": true,
+    "ledger": true,
+    "quotas": true,
+    "groups": true,
+    "statisticsTimeZone": "Asia/Shanghai",
+    "verifiedDeploymentVersion": null
+  },
+  "trace": {
+    "epoch": "demo-epoch-1",
+    "seq": 480,
+    "serverNow": "2026-10-22T01:41:12Z",
+    "observable": true,
+    "retainedRouteIds": [
+      "101",
+      "102",
+      "103",
+      "104",
+      "105"
+    ],
+    "runningRouteIds": [
+      "101"
+    ],
+    "totals": {
+      "completedRequests": 6240,
+      "rerouteHandoffs": 324,
+      "finalErrors": 101
+    }
+  },
+  "overview": {
+    "period": "TODAY",
+    "rangeStart": "2026-10-21T16:00:00Z",
+    "rangeEnd": "2026-10-22T01:41:12Z",
+    "coverage": "COMPLETE",
+    "completedRequests": 1728,
+    "finalErrors": 4,
+    "successRateExpected": 0.9976851851851852,
+    "ttftSumMs": 1800000,
+    "ttftSampleCount": 1000,
+    "ttftMeanMsExpected": 1800,
+    "sameTimeYesterdayCompletedRequests": null
+  },
+  "usage": {
+    "period": "TODAY",
+    "coverage": "COMPLETE",
+    "tokens": {
+      "inputUncached": 500000,
+      "output": 800000,
+      "cacheRead": 23038400,
+      "cacheWrite": 261600,
+      "reasoningIncludedInOutput": 100000
+    },
+    "totalTokensExpected": 24600000,
+    "cacheHitRateExpected": 0.968,
+    "models": [
+      {
+        "providerId": "workbuddy",
+        "modelId": "deepseek-v4.1-flash",
+        "totalTokens": 19200000
+      },
+      {
+        "providerId": "moonshot",
+        "modelId": "kimi-k2.5",
+        "totalTokens": 3900000
+      },
+      {
+        "providerId": "other",
+        "modelId": "other",
+        "totalTokens": 1500000
+      }
+    ]
+  },
+  "groups": [
+    {
+      "id": "free-deepseek4.1",
+      "name": "free-deepseek4.1",
+      "strategy": "rotate",
+      "affinity": "turn",
+      "enabledMemberCount": 16,
+      "providerIds": [
+        "workbuddy",
+        "workbuddy-ai",
+        "qoder-cn",
+        "opencode-zen-free"
+      ],
+      "detailsComplete": false
+    },
+    {
+      "id": "daily-coding",
+      "name": "daily-coding",
+      "strategy": "smart",
+      "affinity": "auto",
+      "enabledMemberCount": 4,
+      "providerIds": [
+        "moonshot",
+        "deepseek"
+      ],
+      "detailsComplete": false
+    }
+  ],
+  "accounts": [
+    {
+      "id": "wb-01",
+      "providerId": "workbuddy",
+      "alias": "账号 01",
+      "availability": "AVAILABLE"
+    },
+    {
+      "id": "wb-02",
+      "providerId": "workbuddy",
+      "alias": "账号 02",
+      "availability": "BUSY"
+    },
+    {
+      "id": "wba-03",
+      "providerId": "workbuddy-ai",
+      "alias": "账号 03",
+      "availability": "AVAILABLE"
+    },
+    {
+      "id": "moon-01",
+      "providerId": "moonshot",
+      "alias": "账号 01",
+      "availability": "AVAILABLE"
+    },
+    {
+      "id": "deepseek-key-01",
+      "providerId": "deepseek",
+      "alias": "API key 01",
+      "availability": "UNKNOWN"
+    }
+  ],
+  "quotas": [
+    {
+      "accountId": "wba-03",
+      "known": true,
+      "observedAt": "2026-10-22T01:41:12Z",
+      "windows": [
+        {
+          "id": "daily",
+          "unit": "credits",
+          "used": 301,
+          "limit": 350,
+          "usedRatioExpected": 0.86,
+          "resetsAt": "2026-10-22T03:41:12Z"
+        }
+      ]
+    },
+    {
+      "accountId": "deepseek-key-01",
+      "known": false,
+      "observedAt": "2026-10-22T01:41:12Z",
+      "windows": []
+    }
+  ],
+  "requests": [
+    {
+      "key": {
+        "connectionId": "demo-main",
+        "epoch": "demo-epoch-1",
+        "routeId": "101",
+        "sourceDay": "2026-10-22"
+      },
+      "startedAt": "2026-10-22T01:41:12Z",
+      "agentId": "codex",
+      "groupId": "free-deepseek4.1",
+      "requestedModel": "group/free-deepseek4.1",
+      "servedModel": "deepseek-v4.1-flash",
+      "providerId": "workbuddy",
+      "accountId": "wb-02",
+      "finalState": "IN_PROGRESS",
+      "rerouteCount": 0,
+      "ttftMs": 1800,
+      "durationMs": null,
+      "usage": {
+        "inputUncached": 500,
+        "output": 600,
+        "cacheRead": 213500,
+        "cacheWrite": 0,
+        "reasoningIncludedInOutput": 0
+      },
+      "meta": {
+        "connectionId": "demo-main",
+        "mode": "DEMO",
+        "observedAt": "2026-10-22T01:41:12Z",
+        "fetchedAt": "2026-10-22T01:41:12Z",
+        "statisticsTimeZone": "Asia/Shanghai",
+        "coverage": "RECENT_ONLY",
+        "stale": false
+      },
+      "attempts": [
+        {
+          "index": 1,
+          "providerId": "workbuddy",
+          "accountId": "wb-02",
+          "model": "deepseek-v4.1-flash",
+          "startedAt": "2026-10-22T01:41:12Z",
+          "httpStatus": null,
+          "durationMs": null,
+          "ttftMs": 1800,
+          "errorCode": null,
+          "handedOn": false
+        }
+      ]
+    },
+    {
+      "key": {
+        "connectionId": "demo-main",
+        "epoch": "demo-epoch-1",
+        "routeId": "102",
+        "sourceDay": "2026-10-22"
+      },
+      "startedAt": "2026-10-22T01:41:08Z",
+      "agentId": "codex",
+      "groupId": "free-deepseek4.1",
+      "requestedModel": "group/free-deepseek4.1",
+      "servedModel": "deepseek-v4.1-flash",
+      "providerId": "workbuddy",
+      "accountId": "wb-02",
+      "finalState": "SUCCEEDED",
+      "rerouteCount": 0,
+      "ttftMs": 1800,
+      "durationMs": 3100,
+      "usage": {
+        "inputUncached": 1237,
+        "output": 533,
+        "cacheRead": 127830,
+        "cacheWrite": 0,
+        "reasoningIncludedInOutput": 0
+      },
+      "meta": {
+        "connectionId": "demo-main",
+        "mode": "DEMO",
+        "observedAt": "2026-10-22T01:41:12Z",
+        "fetchedAt": "2026-10-22T01:41:12Z",
+        "statisticsTimeZone": "Asia/Shanghai",
+        "coverage": "RECENT_ONLY",
+        "stale": false
+      },
+      "attempts": [
+        {
+          "index": 1,
+          "providerId": "workbuddy",
+          "accountId": "wb-02",
+          "model": "deepseek-v4.1-flash",
+          "startedAt": "2026-10-22T01:41:08Z",
+          "httpStatus": 200,
+          "durationMs": 3100,
+          "ttftMs": 1800,
+          "errorCode": null,
+          "handedOn": false
+        }
+      ]
+    },
+    {
+      "key": {
+        "connectionId": "demo-main",
+        "epoch": "demo-epoch-1",
+        "routeId": "103",
+        "sourceDay": "2026-10-22"
+      },
+      "startedAt": "2026-10-22T01:40:52Z",
+      "agentId": "codex",
+      "groupId": "free-deepseek4.1",
+      "requestedModel": "group/free-deepseek4.1",
+      "servedModel": "deepseek-v4.1-flash",
+      "providerId": "workbuddy-ai",
+      "accountId": "wba-03",
+      "finalState": "SUCCEEDED",
+      "rerouteCount": 1,
+      "ttftMs": 2600,
+      "durationMs": 5400,
+      "usage": {
+        "inputUncached": 2000,
+        "output": 1200,
+        "cacheRead": 83000,
+        "cacheWrite": 0,
+        "reasoningIncludedInOutput": 0
+      },
+      "meta": {
+        "connectionId": "demo-main",
+        "mode": "DEMO",
+        "observedAt": "2026-10-22T01:41:12Z",
+        "fetchedAt": "2026-10-22T01:41:12Z",
+        "statisticsTimeZone": "Asia/Shanghai",
+        "coverage": "RECENT_ONLY",
+        "stale": false
+      },
+      "attempts": [
+        {
+          "index": 1,
+          "providerId": "workbuddy",
+          "accountId": "wb-01",
+          "model": "deepseek-v4.1-flash",
+          "startedAt": "2026-10-22T01:40:52Z",
+          "httpStatus": 429,
+          "durationMs": 900,
+          "ttftMs": null,
+          "errorCode": "rate_limited",
+          "handedOn": true
+        },
+        {
+          "index": 2,
+          "providerId": "workbuddy-ai",
+          "accountId": "wba-03",
+          "model": "deepseek-v4.1-flash",
+          "startedAt": "2026-10-22T01:40:52.900Z",
+          "httpStatus": 200,
+          "durationMs": 4500,
+          "ttftMs": 1700,
+          "errorCode": null,
+          "handedOn": false
+        }
+      ]
+    },
+    {
+      "key": {
+        "connectionId": "demo-main",
+        "epoch": "demo-epoch-1",
+        "routeId": "104",
+        "sourceDay": "2026-10-22"
+      },
+      "startedAt": "2026-10-22T01:40:31Z",
+      "agentId": "claude-code",
+      "groupId": "daily-coding",
+      "requestedModel": "group/daily-coding",
+      "servedModel": "kimi-k2.5",
+      "providerId": "moonshot",
+      "accountId": "moon-01",
+      "finalState": "SUCCEEDED",
+      "rerouteCount": 0,
+      "ttftMs": 1200,
+      "durationMs": 4600,
+      "usage": {
+        "inputUncached": 10000,
+        "output": 1200,
+        "cacheRead": 53600,
+        "cacheWrite": 0,
+        "reasoningIncludedInOutput": 0
+      },
+      "meta": {
+        "connectionId": "demo-main",
+        "mode": "DEMO",
+        "observedAt": "2026-10-22T01:41:12Z",
+        "fetchedAt": "2026-10-22T01:41:12Z",
+        "statisticsTimeZone": "Asia/Shanghai",
+        "coverage": "RECENT_ONLY",
+        "stale": false
+      },
+      "attempts": [
+        {
+          "index": 1,
+          "providerId": "moonshot",
+          "accountId": "moon-01",
+          "model": "kimi-k2.5",
+          "startedAt": "2026-10-22T01:40:31Z",
+          "httpStatus": 200,
+          "durationMs": 4600,
+          "ttftMs": 1200,
+          "errorCode": null,
+          "handedOn": false
+        }
+      ]
+    },
+    {
+      "key": {
+        "connectionId": "demo-main",
+        "epoch": "demo-epoch-1",
+        "routeId": "105",
+        "sourceDay": "2026-10-22"
+      },
+      "startedAt": "2026-10-22T01:39:47Z",
+      "agentId": "claude-code",
+      "groupId": "daily-coding",
+      "requestedModel": "group/daily-coding",
+      "servedModel": null,
+      "providerId": "moonshot",
+      "accountId": "moon-01",
+      "finalState": "FAILED",
+      "rerouteCount": 0,
+      "ttftMs": null,
+      "durationMs": 30000,
+      "usage": null,
+      "meta": {
+        "connectionId": "demo-main",
+        "mode": "DEMO",
+        "observedAt": "2026-10-22T01:41:12Z",
+        "fetchedAt": "2026-10-22T01:41:12Z",
+        "statisticsTimeZone": "Asia/Shanghai",
+        "coverage": "RECENT_ONLY",
+        "stale": false
+      },
+      "attempts": [
+        {
+          "index": 1,
+          "providerId": "moonshot",
+          "accountId": "moon-01",
+          "model": "kimi-k2.5",
+          "startedAt": "2026-10-22T01:39:47Z",
+          "httpStatus": 504,
+          "durationMs": 30000,
+          "ttftMs": null,
+          "errorCode": "timeout",
+          "handedOn": false
+        }
+      ]
+    }
+  ],
+  "selectedContext": {
+    "requestKey": {
+      "connectionId": "demo-main",
+      "epoch": "demo-epoch-1",
+      "routeId": "101",
+      "sourceDay": "2026-10-22"
+    },
+    "totalTokens": 214000,
+    "windowLimit": null,
+    "estimated": true,
+    "parts": [
+      {
+        "kind": "tool_results",
+        "tokens": 127000
+      },
+      {
+        "kind": "conversation",
+        "tokens": 51900
+      },
+      {
+        "kind": "other",
+        "tokens": 35100
+      }
+    ]
+  },
+  "scenarios": {
+    "empty": {
+      "requests": [],
+      "completedRequests": 0,
+      "successRate": null
+    },
+    "offlineWithCache": {
+      "connectionStatus": "OFFLINE",
+      "stale": true
+    },
+    "authenticationExpired": {
+      "connectionStatus": "AUTHENTICATION_REQUIRED",
+      "httpStatus": 401
+    },
+    "unsupportedTrace": {
+      "observable": false,
+      "usageStillAvailable": true
+    },
+    "historyTruncated": {
+      "coverage": "PARTIAL",
+      "upstreamCut": true
+    },
+    "detailExpired": {
+      "httpStatus": 404,
+      "keepListMetadata": true
+    }
+  },
+  "metricGoldenCases": [
+    {
+      "name": "tokens_without_double_reasoning",
+      "input": {
+        "inputUncached": 100,
+        "output": 50,
+        "cacheRead": 800,
+        "cacheWrite": 50,
+        "reasoningIncludedInOutput": 20
+      },
+      "expectedTotalTokens": 1000
+    },
+    {
+      "name": "weighted_cache_rate",
+      "requests": [
+        {
+          "inputUncached": 0,
+          "output": 100,
+          "cacheRead": 1000,
+          "cacheWrite": 0,
+          "reasoningIncludedInOutput": 0
+        },
+        {
+          "inputUncached": 9000,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "reasoningIncludedInOutput": 0
+        }
+      ],
+      "expectedCacheHitRate": 0.1
+    },
+    {
+      "name": "mean_is_not_median",
+      "ttftMs": [
+        1000,
+        2000,
+        9000
+      ],
+      "expectedMeanMs": 4000,
+      "expectedMedianMs": 2000
+    },
+    {
+      "name": "unknown_window",
+      "contextTokens": 214000,
+      "windowLimit": null,
+      "expectedWindowUsedRatio": null
+    },
+    {
+      "name": "zero_denominator",
+      "completedRequests": 0,
+      "finalErrors": 0,
+      "expectedSuccessRate": null
+    },
+    {
+      "name": "two_handoffs_final_error",
+      "logicalRequests": 1,
+      "attempts": 3,
+      "handoffs": 2,
+      "finalErrors": 1
+    }
+  ]
+}

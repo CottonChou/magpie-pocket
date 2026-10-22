@@ -1,0 +1,24 @@
+{
+  "groups": [
+    {
+      "id": "coding",
+      "name": "Coding",
+      "members": [
+        "vendor/model-a"
+      ],
+      "routing": "round-robin",
+      "disabled": false,
+      "ready": true,
+      "memberInfo": [
+        {
+          "id": "vendor/model-a",
+          "ready": true,
+          "provider": "vendor",
+          "name": "Vendor",
+          "on": 2,
+          "group": false
+        }
+      ]
+    }
+  ]
+}

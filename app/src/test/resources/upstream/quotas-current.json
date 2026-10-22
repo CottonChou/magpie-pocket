@@ -1,0 +1,34 @@
+[
+  {
+    "provider": "vendor",
+    "name": "Vendor",
+    "user": "account-a",
+    "readAt": "2026-10-22T10:00:00Z",
+    "windows": [
+      {
+        "name": "credits",
+        "used": 52.5,
+        "amount": 10.5,
+        "limit": 20,
+        "unit": "credits",
+        "resetsAt": "2026-11-01T00:00:00Z",
+        "display": "10.5 / 20 credits"
+      },
+      {
+        "name": "percentage only",
+        "used": 52.5
+      },
+      {
+        "name": "unknown"
+      }
+    ]
+  },
+  {
+    "provider": "vendor",
+    "name": "Vendor",
+    "user": "unlimited-account",
+    "windows": [
+      { "name": "unlimited", "used": 0, "unlimited": true }
+    ]
+  }
+]

@@ -1,0 +1,31 @@
+{
+  "period": "today",
+  "since": "2026-10-22T00:00:00Z",
+  "calls": 10,
+  "errors": 1,
+  "timed": 8,
+  "ttft_ms": 6400,
+  "input": 1000,
+  "output": 500,
+  "cache_read": 2000,
+  "cache_write": 0,
+  "models": [
+    {
+      "id": "vendor/model-a",
+      "provider": "vendor",
+      "model": "model-a",
+      "calls": 10,
+      "input": 1000,
+      "output": 500,
+      "cache_read": 2000,
+      "cache_write": 0
+    }
+  ],
+  "series": [
+    {
+      "label": "09",
+      "time": "2026-10-22T09:00:00Z",
+      "calls": 10
+    }
+  ]
+}

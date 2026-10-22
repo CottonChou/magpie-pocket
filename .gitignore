@@ -1,0 +1,20 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+build/
+/build
+app/build/
+*.hprof
+.cxx/
+
+# Local signing credentials and private key material
+/signing.properties
+/.private-signing/
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key

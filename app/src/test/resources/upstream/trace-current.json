@@ -1,0 +1,84 @@
+{
+  "seq": 7,
+  "totals": {
+    "requests": 10,
+    "rerouted": 2,
+    "errors": 1
+  },
+  "mine": true,
+  "now": "2026-10-22T10:00:00Z",
+  "routes": [
+    {
+      "seq": 7,
+      "id": 101,
+      "time": "2026-10-22T09:59:55Z",
+      "agent": "codex",
+      "model": "model-a",
+      "provider": "vendor",
+      "group": {
+        "id": "coding",
+        "name": "Coding",
+        "routing": "round-robin",
+        "affinity": "turn",
+        "members": [
+          "vendor/model-a"
+        ]
+      },
+      "affinity": {
+        "mode": "turn",
+        "kept": true,
+        "why": "same turn"
+      },
+      "order": [
+        {
+          "id": "account-a",
+          "provider": "vendor",
+          "name": "Account A",
+          "model": "model-a"
+        }
+      ],
+      "tries": [
+        {
+          "id": "account-a",
+          "model": "model-a",
+          "start": "2026-10-22T09:59:55Z",
+          "done": true,
+          "status": 200,
+          "ms": 3000,
+          "ttft": 800,
+          "served": "model-a"
+        }
+      ],
+      "usage": [
+        {
+          "provider": "vendor",
+          "model": "model-a",
+          "in": 100,
+          "out": 50,
+          "cache_read": 200,
+          "reasoning": 10
+        }
+      ],
+      "done": true,
+      "status": 200,
+      "ms": 3000,
+      "ttft": 800,
+      "served": "model-a",
+      "prompt": {
+        "tokens": 300,
+        "window": 1000,
+        "counted": true,
+        "parts": [
+          {
+            "kind": "tool_results",
+            "tokens": 200
+          },
+          {
+            "kind": "conversation",
+            "tokens": 100
+          }
+        ]
+      }
+    }
+  ]
+}
