@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,7 +40,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import com.magpie.pocket.core.design.InlineNotice
 import com.magpie.pocket.core.design.MagpieDimensions
 import com.magpie.pocket.core.design.MagpieTheme
+import com.magpie.pocket.core.design.MagpieSwitch
 import com.magpie.pocket.core.model.Capabilities
 import com.magpie.pocket.core.model.ConnectionConfig
 import com.magpie.pocket.core.model.DataMode
@@ -542,7 +543,8 @@ fun DisplayPreferencesSheet(
     onUpdateTheme: (ThemeMode) -> Unit,
     onUpdateGlass: (GlassTier) -> Unit,
     onUpdateReduceMotion: (Boolean) -> Unit,
-    onUpdateMaskAccounts: (Boolean) -> Unit
+    onUpdateMaskAccounts: (Boolean) -> Unit,
+    onUpdateKeepLiveConnection: (Boolean) -> Unit = {}
 ) {
     val colors = MagpieTheme.colors
 
@@ -643,7 +645,9 @@ fun DisplayPreferencesSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .heightIn(min = MagpieDimensions.TouchTargetMinimum)
+                    .clickable { onUpdateReduceMotion(!preferences.reduceMotion) }
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -655,10 +659,10 @@ fun DisplayPreferencesSheet(
                     lineHeight = 16.sp
                     )
                 }
-                Switch(
+                MagpieSwitch(
+                    label = "减少动态效果",
                     checked = preferences.reduceMotion,
-                    onCheckedChange = onUpdateReduceMotion,
-                    colors = SwitchDefaults.colors(checkedThumbColor = colors.accent)
+                    onCheckedChange = onUpdateReduceMotion
                 )
             }
 
@@ -668,7 +672,9 @@ fun DisplayPreferencesSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .heightIn(min = MagpieDimensions.TouchTargetMinimum)
+                    .clickable { onUpdateMaskAccounts(!preferences.maskAccountNames) }
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -680,10 +686,44 @@ fun DisplayPreferencesSheet(
                     lineHeight = 16.sp
                     )
                 }
-                Switch(
+                MagpieSwitch(
+                    label = "账号名称打码",
                     checked = preferences.maskAccountNames,
-                    onCheckedChange = onUpdateMaskAccounts,
-                    colors = SwitchDefaults.colors(checkedThumbColor = colors.accent)
+                    onCheckedChange = onUpdateMaskAccounts
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = MagpieDimensions.TouchTargetMinimum)
+                    .clickable { onUpdateKeepLiveConnection(!preferences.keepLiveConnectionInBackground) }
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "后台保持连接",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.textPrimary,
+                        lineHeight = 16.sp
+                    )
+                    Text(
+                        text = "实时连接在后台短暂保持；可随时关闭",
+                        fontSize = 11.sp,
+                        color = colors.textSecondary,
+                        lineHeight = 16.sp
+                    )
+                }
+                MagpieSwitch(
+                    label = "后台保持连接",
+                    checked = preferences.keepLiveConnectionInBackground,
+                    onCheckedChange = onUpdateKeepLiveConnection,
+                    enabled = true
                 )
             }
         }

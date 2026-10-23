@@ -1,6 +1,6 @@
 {
   "product": "Magpie Pocket",
-  "version": "1.0",
+  "version": "1.1",
   "units": {
     "layout": "dp",
     "typography": "sp",
@@ -67,27 +67,48 @@
   "typography": {
     "pageTitle": {
       "size": 28,
-      "weight": 600
+      "lineHeight": 34,
+      "weight": 700
     },
     "heroMetric": {
       "size": 36,
-      "weight": 550
+      "lineHeight": 40,
+      "weight": 600
     },
     "inlineMetric": {
       "size": 24,
-      "weight": 550
+      "lineHeight": 28,
+      "weight": 600
     },
     "body": {
       "size": 14,
+      "lineHeight": 20,
       "weight": 400
     },
     "label": {
       "size": 12,
-      "weight": 500
+      "lineHeight": 16,
+      "weight": 400
     },
     "navigation": {
       "size": 12,
-      "weight": 500
+      "lineHeight": 16,
+      "weight": 400
+    },
+    "sectionTitle": {
+      "size": 17,
+      "lineHeight": 22,
+      "weight": 600
+    },
+    "sheetTitle": {
+      "size": 21,
+      "lineHeight": 26,
+      "weight": 600
+    },
+    "subhead": {
+      "size": 13,
+      "lineHeight": 18,
+      "weight": 400
     }
   },
   "icons": {
@@ -96,31 +117,30 @@
       20,
       24
     ],
-    "placeholderBrand": "bird",
-    "productionBrandRequiresLicenseReview": true
+    "brand": "bird",
+    "brandArtwork": "Lucide bird",
+    "brandLicense": "ISC",
+    "retainAttribution": true
   },
   "glass": {
     "defaultMode": "clear",
+    "implementation": "layered_tint_highlight_and_shadow",
+    "minimumApi": 24,
     "clear": {
-      "minimumApi": 31,
-      "blurRadius": 22
+      "lightAlpha": 0.74,
+      "darkAlpha": 0.82
     },
     "tinted": {
-      "blurRadiusRange": [
-        8,
-        16
-      ],
-      "alphaRange": [
-        0.9,
-        0.96
-      ]
+      "alpha": 0.9
     },
     "solid": {
-      "blurRadius": 0,
       "alpha": 1.0
     },
+    "highlightBorderDp": 0.75,
+    "dataPanelOpaque": true,
     "maximumActiveScreenFractionTarget": 0.25,
-    "neverBlurForeground": true
+    "neverBlurForeground": true,
+    "requiresOpticalBlur": false
   },
   "motion": {
     "tabDurationRange": [
@@ -140,5 +160,24 @@
     "missingNumericValue": null,
     "ttftDefaultStatistic": "arithmetic_mean",
     "rerouteCounterUnit": "handoff_count"
+  },
+  "controls": {
+    "switch": {
+      "minimumTouchTargetDp": 48,
+      "minimumThumbTrackContrast": 3.0,
+      "checkedTrackToken": "accent",
+      "checkedThumbLight": "#FFFFFF",
+      "checkedThumbDark": "#101217",
+      "uncheckedTrackToken": "surfaceSubtle",
+      "uncheckedThumbToken": "textSecondary",
+      "allStatesExplicit": true
+    }
+  },
+  "routing": {
+    "mode": "automatic_live_request",
+    "manualGroupPicker": false,
+    "idleLabel": "等待路由请求",
+    "directRouteLabel": "直接路由",
+    "historyPinnedUntilReturnLive": true
   }
 }

@@ -23,8 +23,18 @@ class RoutingPresentationTest {
         val trace = snapshot(runningIds = listOf("2"), routes = listOf(finished, running))
         assertEquals("2", chooseLiveRoute(trace, "g1")?.key?.routeId)
 
+        // Running ids are authoritative. Once the trace says nothing is running,
+        // a stale IN_PROGRESS row is not evidence; only the truly finished row wins.
         val idle = snapshot(runningIds = emptyList(), routes = listOf(finished, running))
-        assertEquals("2", chooseLiveRoute(idle, "g1")?.key?.routeId)
+        assertEquals("1", chooseLiveRoute(idle, "g1")?.key?.routeId)
+        assertEquals("1", chooseAutoRoute(idle, emptyList())?.key?.routeId)
+
+        val noEvidence = snapshot(
+            runningIds = emptyList(),
+            routes = listOf(running)
+        )
+        assertNull(chooseLiveRoute(noEvidence, "g1"))
+        assertNull(chooseAutoRoute(noEvidence, emptyList()))
     }
 
     @Test

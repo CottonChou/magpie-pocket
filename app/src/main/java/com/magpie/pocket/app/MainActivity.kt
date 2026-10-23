@@ -1,10 +1,18 @@
 package com.magpie.pocket.app
 
 import android.os.Bundle
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.os.Build
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.Lifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -34,16 +42,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.magpie.pocket.core.design.AppChrome
 import com.magpie.pocket.core.design.AppTab
 import com.magpie.pocket.core.design.FloatingBottomNav
@@ -65,22 +76,41 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    private var appViewModel: AppViewModel? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val app = application as MagpieApplication
+        val sharedViewModel = app.appViewModel
+        appViewModel = sharedViewModel
+        installNetworkCallback(sharedViewModel)
 
         setContent {
-            val viewModel: AppViewModel = viewModel {
-                AppViewModel(
-                    credentialStore = CredentialStoreConnectionSource(app.credentialStore),
-                    preferencesManager = PreferencesManagerDisplaySource(app.preferencesManager),
-                    demoRepo = app.demoRepository,
-                    apiClient = app.apiClient
-                )
-            }
+            val viewModel: AppViewModel = sharedViewModel
 
             val preferences by viewModel.displayPreferences.collectAsState()
+            val preferencesReady by viewModel.displayPreferencesReady.collectAsState()
+            val connection by viewModel.connectionConfig.collectAsState()
+            val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
+
+            LaunchedEffect(
+                preferencesReady,
+                lifecycleState,
+                connection.mode,
+                preferences.keepLiveConnectionInBackground
+            ) {
+                if (!preferencesReady) return@LaunchedEffect
+                maybeRequestNotificationPermission(
+                    lifecycleState = lifecycleState,
+                    mode = connection.mode,
+                    keepaliveEnabled = preferences.keepLiveConnectionInBackground
+                )
+            }
 
             val isDark = when (preferences.themeMode) {
                 ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
@@ -106,6 +136,66 @@ class MainActivity : ComponentActivity() {
                 MainAppRoot(viewModel = viewModel)
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appViewModel?.onActivityStarted()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appViewModel?.onActivityResumed()
+    }
+
+    override fun onPause() {
+        appViewModel?.onActivityPaused()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        appViewModel?.onActivityStopped()
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        networkCallback?.let { callback ->
+            runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
+        connectivityManager = null
+        appViewModel = null
+        super.onDestroy()
+    }
+
+    private fun maybeRequestNotificationPermission(
+        lifecycleState: Lifecycle.State,
+        mode: DataMode,
+        keepaliveEnabled: Boolean
+    ) {
+        if (lifecycleState.isAtLeast(Lifecycle.State.RESUMED).not()) return
+        if (mode != DataMode.LIVE || !keepaliveEnabled) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) return
+
+        if (appViewModel?.claimNotificationPermissionRequest() == true) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun installNetworkCallback(viewModel: AppViewModel) {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return
+        connectivityManager = manager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                runOnUiThread { viewModel.onNetworkAvailable() }
+            }
+        }
+        networkCallback = callback
+        runCatching { manager.registerDefaultNetworkCallback(callback) }
     }
 }
 
@@ -151,6 +241,8 @@ fun MainAppRoot(viewModel: AppViewModel) {
     val gatewaySheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val preferencesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val density = LocalDensity.current
+    var chromeHeight by remember { mutableStateOf(MagpieDimensions.ChromeHeight) }
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBarPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
@@ -173,7 +265,7 @@ fun MainAppRoot(viewModel: AppViewModel) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = statusBarPadding + MagpieDimensions.ChromeHeight)
+                .padding(top = statusBarPadding + chromeHeight)
                 .clipToBounds()
         ) {
         // Tab content keeps each LazyColumn's scroll state while switching tabs.
@@ -187,14 +279,8 @@ fun MainAppRoot(viewModel: AppViewModel) {
                     runningRequest = runningRequest,
                     quotas = quotas,
                     isLoading = isLoading,
-                    onNavigateToRouting = { routeId ->
-                        val match = trace?.recentRoutes?.find { it.key.routeId == routeId }
-                            ?: runningRequest?.takeIf { it.key.routeId == routeId }
-                            ?: requestsPage?.items?.find { it.key.routeId == routeId }
-                        if (match != null) {
-                            match.groupId?.let(viewModel::selectGroupId)
-                            viewModel.resetToLatest()
-                        }
+                    onNavigateToRouting = { _ ->
+                        viewModel.resetToLatest()
                         viewModel.selectTab(AppTab.ROUTING)
                     },
                     onNavigateToErrors = {
@@ -213,7 +299,6 @@ fun MainAppRoot(viewModel: AppViewModel) {
                     groups = groups,
                     accounts = accounts,
                     selectedGroupId = selectedGroupId,
-                    onSelectGroupId = { viewModel.selectGroupId(it) },
                     selectedRequest = routingRequest,
                     requestDetail = routingDetail,
                     onSelectRequest = { viewModel.selectRoutingRequest(it) },
@@ -275,6 +360,9 @@ fun MainAppRoot(viewModel: AppViewModel) {
                 onToggleTheme = {
                     val nextTheme = if (colors.isDark) ThemeMode.LIGHT else ThemeMode.DARK
                     viewModel.updateTheme(nextTheme)
+                },
+                modifier = Modifier.onSizeChanged { size ->
+                    chromeHeight = with(density) { size.height.toDp() }
                 }
             )
         }
@@ -344,7 +432,8 @@ fun MainAppRoot(viewModel: AppViewModel) {
             onUpdateTheme = { viewModel.updateTheme(it) },
             onUpdateGlass = { viewModel.updateGlassTier(it) },
             onUpdateReduceMotion = { viewModel.updateReduceMotion(it) },
-            onUpdateMaskAccounts = { viewModel.updateMaskAccounts(it) }
+            onUpdateMaskAccounts = { viewModel.updateMaskAccounts(it) },
+            onUpdateKeepLiveConnection = { viewModel.updateKeepLiveConnectionInBackground(it) }
         )
     }
 

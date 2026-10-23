@@ -1,0 +1,4 @@
+interface:
+  display_name: "Magpie Pocket 轻透玻璃设计"
+  short_description: "复用冷白淡紫视觉、玻璃导航与可读数据面板，还原移动端页面及控件交互"
+  default_prompt: "使用 $magpie-pocket-design 按参考图和设计规范实现移动端页面，并检查浅色、深色及控件状态。"

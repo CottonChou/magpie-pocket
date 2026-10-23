@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +28,8 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -41,12 +45,76 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.magpie.pocket.core.model.DataMode
 import com.magpie.pocket.core.model.FinalState
 import com.magpie.pocket.core.model.HourlyTrendPoint
+
+data class SwitchPalette(
+    val checkedTrack: Color,
+    val checkedThumb: Color,
+    val uncheckedTrack: Color,
+    val uncheckedThumb: Color,
+    val border: Color,
+    val disabledTrack: Color,
+    val disabledThumb: Color
+)
+
+fun switchPalette(colors: MagpieColorScheme): SwitchPalette = SwitchPalette(
+    checkedTrack = colors.accent,
+    // A white thumb on the light accent and the dark page background on the
+    // pastel dark accent both keep the thumb/track separation explicit.
+    checkedThumb = if (colors.isDark) MagpieColors.DarkBackground else Color.White,
+    uncheckedTrack = colors.surfaceSubtle,
+    uncheckedThumb = colors.textSecondary,
+    border = colors.textTertiary.copy(alpha = 0.72f),
+    disabledTrack = colors.surfaceSubtle.copy(alpha = 0.55f),
+    disabledThumb = colors.textTertiary.copy(alpha = 0.7f)
+)
+
+@Composable
+fun MagpieSwitch(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
+    val colors = MagpieTheme.colors
+    val palette = switchPalette(colors)
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        modifier = modifier
+            .sizeIn(
+                minWidth = MagpieDimensions.TouchTargetMinimum,
+                minHeight = MagpieDimensions.TouchTargetMinimum
+            )
+            .semantics {
+                contentDescription = label
+                stateDescription = if (checked) "已开启" else "已关闭"
+                role = Role.Switch
+            },
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = palette.checkedThumb,
+            checkedTrackColor = palette.checkedTrack,
+            checkedBorderColor = palette.border,
+            uncheckedThumbColor = palette.uncheckedThumb,
+            uncheckedTrackColor = palette.uncheckedTrack,
+            uncheckedBorderColor = palette.border,
+            disabledCheckedThumbColor = palette.disabledThumb,
+            disabledCheckedTrackColor = palette.disabledTrack,
+            disabledCheckedBorderColor = palette.border.copy(alpha = 0.5f),
+            disabledUncheckedThumbColor = palette.disabledThumb,
+            disabledUncheckedTrackColor = palette.disabledTrack,
+            disabledUncheckedBorderColor = palette.border.copy(alpha = 0.5f)
+        )
+    )
+}
 
 enum class AppTab(val label: String) {
     OVERVIEW("概览"),
@@ -166,7 +234,7 @@ fun AppChrome(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(MagpieDimensions.ChromeHeight)
+            .heightIn(min = MagpieDimensions.ChromeHeight)
             .padding(horizontal = MagpieDimensions.PagePadding, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -174,7 +242,7 @@ fun AppChrome(
         Row(
             modifier = Modifier
                 .weight(1f)
-                .height(MagpieDimensions.TouchTargetMinimum)
+                .heightIn(min = MagpieDimensions.TouchTargetMinimum)
                 .clip(RoundedCornerShape(16.dp))
                 .springPress { onGatewayClick() }
                 .padding(horizontal = 0.dp),

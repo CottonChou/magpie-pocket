@@ -1,8 +1,11 @@
 package com.magpie.pocket.core.network
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.FormBody
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -74,41 +77,39 @@ class MagpieApiClient(
 
         val request = requestBuilder.build()
 
-        try {
-            standardClient.newCall(request).execute().use { response ->
-                when {
-                    response.code == 401 -> false
-                    response.code == 403 -> throw PermissionDeniedException(
-                        "认证被拒绝 (403)。若使用 Cloudflare Access，请检查 Service Token 权限。"
-                    )
-                    response.code in 300..399 -> {
-                        val location = response.header("Location") ?: return@use false
-                        val redirect = request.url.resolve(location) ?: return@use false
-                        if (!sameOrigin(request.url, redirect)) {
-                            throw CloudflareAccessRequiredException(
-                                "请求被重定向到其他站点，通常是 Cloudflare Access 登录页。请检查 CF Access Service Token。"
-                            )
-                        }
-                        // Only a same-origin Magpie redirect accompanied by a Magpie
-                        // session cookie is considered a successful exchange.
-                        hasMagpieSessionCookie(request)
+        awaitCall(
+            client = standardClient,
+            request = request,
+            mapIOException = { NetworkUnavailableException("认证请求失败，请检查网络与服务地址", it) }
+        ) { response ->
+            when {
+                response.code == 401 -> false
+                response.code == 403 -> throw PermissionDeniedException(
+                    "认证被拒绝 (403)。若使用 Cloudflare Access，请检查 Service Token 权限。"
+                )
+                response.code in 300..399 -> {
+                    val location = response.header("Location") ?: return@awaitCall false
+                    val redirect = request.url.resolve(location) ?: return@awaitCall false
+                    if (!sameOrigin(request.url, redirect)) {
+                        throw CloudflareAccessRequiredException(
+                            "请求被重定向到其他站点，通常是 Cloudflare Access 登录页。请检查 CF Access Service Token。"
+                        )
                     }
-                    response.isSuccessful -> {
-                        val contentType = response.header("Content-Type") ?: ""
-                        if (contentType.contains("text/html", ignoreCase = true)) {
-                            throw CloudflareAccessRequiredException(
-                                "服务端返回 HTML 登录页，需要先完成 Cloudflare Access 或 Magpie 认证。"
-                            )
-                        }
-                        hasMagpieSessionCookie(request)
-                    }
-                    else -> false
+                    // Only a same-origin Magpie redirect accompanied by a Magpie
+                    // session cookie is considered a successful exchange.
+                    hasMagpieSessionCookie(request)
                 }
+                response.isSuccessful -> {
+                    val contentType = response.header("Content-Type") ?: ""
+                    if (contentType.contains("text/html", ignoreCase = true)) {
+                        throw CloudflareAccessRequiredException(
+                            "服务端返回 HTML 登录页，需要先完成 Cloudflare Access 或 Magpie 认证。"
+                        )
+                    }
+                    hasMagpieSessionCookie(request)
+                }
+                else -> false
             }
-        } catch (e: MagpieApiException) {
-            throw e
-        } catch (e: IOException) {
-            throw NetworkUnavailableException("认证请求失败，请检查网络与服务地址", e)
         }
     }
 
@@ -180,14 +181,11 @@ class MagpieApiClient(
 
         val request = requestBuilder.build()
 
-        val response: Response
-        try {
-            response = client.newCall(request).execute()
-        } catch (e: IOException) {
-            throw NetworkUnavailableException("网络连接失败，请检查网络与服务地址", e)
-        }
-
-        response.use { resp ->
+        awaitCall(
+            client = client,
+            request = request,
+            mapIOException = { NetworkUnavailableException("网络连接失败，请检查网络与服务地址", it) }
+        ) { resp ->
             val code = resp.code
             val contentType = resp.header("Content-Type") ?: ""
 
@@ -220,13 +218,41 @@ class MagpieApiClient(
                 throw MagpieApiException("HTTP 请求失败: 状态码 $code", code)
             }
 
-            val bodyString = resp.body?.string() ?: throw UnexpectedResponseException("响应体为空")
+            resp.body?.string() ?: throw UnexpectedResponseException("响应体为空")
+        }.let { bodyString ->
             try {
                 json.decodeFromString<T>(bodyString)
             } catch (e: Exception) {
                 throw UnexpectedResponseException("服务响应格式不兼容，无法解析 JSON")
             }
         }
+    }
+
+    private suspend fun <T> awaitCall(
+        client: OkHttpClient,
+        request: Request,
+        mapIOException: (IOException) -> MagpieApiException,
+        transform: (Response) -> T
+    ): T = suspendCancellableCoroutine { continuation ->
+        val call = client.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                continuation.resumeWith(Result.failure(mapIOException(e)))
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val result = try {
+                    response.use { Result.success(transform(it)) }
+                } catch (e: IOException) {
+                    Result.failure(mapIOException(e))
+                } catch (e: Throwable) {
+                    Result.failure(e)
+                }
+                continuation.resumeWith(result)
+            }
+        })
     }
 
     companion object {

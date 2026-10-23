@@ -65,6 +65,17 @@ Current upstream response unions/aliases are parsed explicitly, including numeri
 
 Request timestamps are parsed as RFC3339 instants and rendered in the device timezone; nanosecond fractions are normalized without changing the UTC instant. The Material date picker continues using UTC-encoded calendar dates. Generated metadata uses true UTC timestamps.
 
-Trace snapshots expose normalized summaries and full details from the same retained cache. Live routing follows the selected group, while request-detail modals retain their own selection. Provider/account changes, retries and completion update the graph and evidence together. Epoch/sequence restarts clear stale live state, and deployments without explicit retained IDs use a bounded 60-route cache.
+Trace snapshots expose normalized summaries and full details from the same retained cache. Live routing follows the globally newest observed in-flight request and derives its group automatically; without in-flight activity it uses the latest eligible completion. Request-detail modals retain their own selection. Provider/account changes, retries and completion update the graph and evidence together. Epoch/sequence restarts clear stale live state, and deployments without explicit retained IDs use a bounded 60-route cache.
 
 Motion is tied to real in-flight state. Completion feedback is finite and consumed when finished or leaving the canvas. App/system reduced motion, lifecycle and connection state gate animation. Historical inspection stays pinned until returning to live following.
+
+
+## 2026-10-23 Background lifetime and accessible controls
+
+MagpieApplication owns one AppViewModel shared by the Activity and LiveKeepaliveService. A lightweight 30-second heartbeat and capped reconnect delays keep LIVE observations recoverable. Background traffic requires a promoted service and a loaded, enabled preference; foreground traffic remains usable while preferences load. Every HTTP call closes on coroutine cancellation, including pending response bodies.
+
+A foreground-service request made while the Activity was visible may finish starting after Home is pressed. The service promotes before inspecting configuration, waits for definitive stored preferences, and stops for disabled or Demo state. Authentication failures remain sticky until explicit retry. Notification permission denial does not block the foreground-service contract.
+
+MagpieSwitch provides explicit thumb/track colors, labels, state descriptions and 48dp minimum touch layout. Compact routing headers preserve the actual group name without duplicated follow labels. AppChrome has a 64dp minimum and grows with text; content reserves its measured height so enlarged gateway status text is not clipped.
+
+The reusable visual specification is maintained in .agents/skills/magpie-pocket-design. It includes the approved image and identifies later interaction requirements that supersede its old group picker.

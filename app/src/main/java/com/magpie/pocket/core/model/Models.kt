@@ -272,5 +272,7 @@ data class DisplayPreferences(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val glassTier: GlassTier = GlassTier.CLEAR,
     val reduceMotion: Boolean = false,
-    val maskAccountNames: Boolean = true
+    val maskAccountNames: Boolean = true,
+    /** LIVE only: keep the encrypted session and trace alive while backgrounded. */
+    val keepLiveConnectionInBackground: Boolean = true
 )

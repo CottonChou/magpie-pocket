@@ -56,6 +56,11 @@ class LiveMagpieRepository(
         return result.capabilities
     }
 
+    override suspend fun probeLight() {
+        ensureSession()
+        apiClient.getState(baseUrl)
+    }
+
     private suspend fun ensureSession() {
         if (sessionReady) return
         MagpieSession.initialize(apiClient, baseUrl, webKey)
@@ -281,6 +286,10 @@ class LiveMagpieRepository(
 
     override suspend fun requests(query: RequestQuery): RequestPage {
         val isFailed = query.statusFilter == "ERROR"
+        // Capture before the request: a trace restart may happen while the ledger
+        // call is in flight, and these rows belong to the epoch that was current
+        // when they were requested.
+        val requestEpoch = lastEpoch
         val resp = apiClient.getLedgerRequests(
             baseUrl = baseUrl,
             period = if (query.day != null) "day" else "today",
@@ -307,7 +316,7 @@ class LiveMagpieRepository(
             RequestSummary(
                 key = RequestKey(
                     connectionId = connectionId,
-                    epoch = lastEpoch,
+                    epoch = requestEpoch,
                     routeId = rec.routeId ?: rec.route ?: rec.id ?: "0",
                     sourceDay = rec.day
                 ),

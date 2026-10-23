@@ -8,7 +8,8 @@ import com.magpie.pocket.core.model.DisplayPreferences
 import com.magpie.pocket.core.model.ThemeMode
 import com.magpie.pocket.core.network.MagpieApiClient
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +33,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModelAuthTest {
 
+    @get:org.junit.Rule
+    val testTimeout = org.junit.rules.Timeout.seconds(10)
+
     private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var server: MockWebServer
     private val viewModels = CopyOnWriteArrayList<AppViewModel>()
@@ -45,7 +49,9 @@ class AppViewModelAuthTest {
 
     @After
     fun tearDown() {
-        viewModels.forEach { it.viewModelScope.cancel() }
+        runBlocking {
+            viewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() }
+        }
         server.shutdown()
         Dispatchers.resetMain()
     }
@@ -244,6 +250,7 @@ class AppViewModelAuthTest {
 
     @Test
     fun currentConnection401IsStickyAndNoStaleTraceTurnsItGreen() = runBlocking {
+        kotlinx.coroutines.withTimeout(10_000) {
         val expired = java.util.concurrent.atomic.AtomicBoolean(false)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
@@ -271,6 +278,7 @@ class AppViewModelAuthTest {
         Thread.sleep(200)
         assertEquals(ConnectionHealth.AUTH_REQUIRED, viewModel.connectionStatus.value.health)
         assertFalse(viewModel.isOnline.value)
+        }
     }
 
     @Test
@@ -422,7 +430,7 @@ class AppViewModelAuthTest {
                     cfAccessClientSecret = config.cfAccessClientSecret
                 ).also { clients += it }
             }
-        ).also { viewModels += it }
+        ).also { viewModels += it; it.onActivityResumed() }
     }
 }
 
@@ -462,5 +470,9 @@ private class AuthFakePreferencesManager : DisplayPreferencesSource {
 
     override suspend fun updateMaskAccounts(enabled: Boolean) {
         state.value = state.value.copy(maskAccountNames = enabled)
+    }
+
+    override suspend fun updateKeepLiveConnectionInBackground(enabled: Boolean) {
+        state.value = state.value.copy(keepLiveConnectionInBackground = enabled)
     }
 }

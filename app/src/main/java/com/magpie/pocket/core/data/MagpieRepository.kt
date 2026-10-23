@@ -23,6 +23,8 @@ data class RequestQuery(
 
 interface MagpieRepository {
     suspend fun probe(): Capabilities
+    /** Lightweight authenticated state check used by the 30s heartbeat. */
+    suspend fun probeLight() { probe() }
     suspend fun overview(period: Period = Period.TODAY): OverviewSnapshot
     fun observeTrace(): Flow<TraceSnapshot>
     suspend fun groups(): List<RouteGroup>

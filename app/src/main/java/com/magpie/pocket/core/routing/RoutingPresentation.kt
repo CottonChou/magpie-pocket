@@ -88,13 +88,33 @@ fun reduceTraceRouting(
     )
 }
 
-/** Latest in-flight request in the selected group wins; otherwise latest finished. */
+/** Newest in-flight request across every group wins; otherwise the newest completed route. */
+fun chooseLiveRoute(snapshot: TraceSnapshot?): RequestSummary? {
+    if (snapshot == null) return null
+    val running = snapshot.runningRouteIds.toSet()
+    val runningRoutes = snapshot.recentRoutes
+        .filter { it.key.routeId in running }
+        .maxByOrNull { sortKey(it) }
+    if (runningRoutes != null) return runningRoutes
+
+    val newestCompleted = snapshot.recentRoutes
+        .filter { it.key.routeId !in running && it.finalState in FINISHED_STATES }
+        .maxByOrNull { sortKey(it) }
+    if (newestCompleted != null) return newestCompleted
+
+    // A route that is neither currently running nor confirmed finished is not
+    // evidence for an automatic route. Keep the explicit waiting state instead.
+    return null
+}
+
+/** Backward-compatible internal selector used by pinned group navigation/tests. */
 fun chooseLiveRoute(snapshot: TraceSnapshot?, groupId: String?): RequestSummary? {
-    if (snapshot == null || groupId == null) return null
+    if (snapshot == null) return null
+    if (groupId == null) return chooseLiveRoute(snapshot)
     val matching = snapshot.recentRoutes.filter { it.groupId == groupId }
     val running = snapshot.runningRouteIds.toSet()
     return matching.filter { it.key.routeId in running }.maxByOrNull { sortKey(it) }
-        ?: matching.maxByOrNull { sortKey(it) }
+        ?: matching.filter { it.finalState in FINISHED_STATES }.maxByOrNull { sortKey(it) }
 }
 
 fun chooseRouteForGroup(
@@ -104,7 +124,32 @@ fun chooseRouteForGroup(
 ): RequestSummary? {
     if (groupId == null) return null
     return chooseLiveRoute(snapshot, groupId)
-        ?: fallback.firstOrNull { it.groupId == groupId }
+        ?: fallback
+            .filter { it.groupId == groupId && it.finalState in FINISHED_STATES }
+            .maxByOrNull { sortKey(it) }
+}
+
+/**
+ * Automatic routing evidence is global. The first group in the group list is never
+ * evidence of a request: a missing route produces an explicit waiting state.
+ */
+fun chooseAutoRoute(
+    snapshot: TraceSnapshot?,
+    fallback: List<RequestSummary>
+): RequestSummary? {
+    val traceRoute = chooseLiveRoute(snapshot)
+    if (traceRoute != null) return traceRoute
+    // Ledger fallback is historical evidence only: a stale IN_PROGRESS/PENDING row
+    // is not an observed running route and must not auto-focus as live activity.
+    // It must also belong to the current trace epoch; after a restart, rows from
+    // the previous epoch cannot resurrect a recycled live route id.
+    val currentEpoch = snapshot?.epoch
+    return fallback
+        .filter {
+            it.finalState in FINISHED_STATES &&
+                (currentEpoch.isNullOrBlank() || it.key.epoch == currentEpoch)
+        }
+        .maxByOrNull { sortKey(it) }
 }
 
 /** Keep group ordering when the active provider is already visible; otherwise replace the tail. */

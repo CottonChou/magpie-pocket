@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -117,7 +118,6 @@ fun RoutingScreen(
     groups: List<RouteGroup>,
     accounts: List<Account>,
     selectedGroupId: String?,
-    onSelectGroupId: (String) -> Unit,
     selectedRequest: RequestSummary?,
     requestDetail: RequestDetail?,
     onSelectRequest: (RequestSummary) -> Unit,
@@ -134,17 +134,21 @@ fun RoutingScreen(
 ) {
     val colors = MagpieTheme.colors
     val preferences = MagpieTheme.preferences
-    var showGroupPicker by remember { mutableStateOf(false) }
+    val configuration = LocalConfiguration.current
+    val compactGroupHeader = configuration.screenWidthDp < 360 || configuration.fontScale > 1.15f
     var showDecisionModal by remember { mutableStateOf(false) }
     var activeSheet by remember { mutableStateOf<RoutingSheet?>(null) }
 
-    val currentGroup = groups.find { it.id == selectedGroupId } ?: groups.firstOrNull()
+    // Automatic routing never falls back to the first configured group. The
+    // selected request is the only evidence of the active group.
+    val currentGroup = selectedRequest?.groupId?.let { id -> groups.find { it.id == id } }
+        ?: selectedGroupId?.let { id -> groups.find { it.id == id } }
     val runningCount = trace?.runningRouteIds?.size ?: 0
     val context = requestDetail?.context
     val groupProviders = currentGroup?.providerIds ?: emptyList()
     // Highlight only with matching request/attempt evidence. A running route id from a
     // different group is not evidence for this group.
-    val matchingSelection = selectedRequest?.takeIf { it.groupId == currentGroup?.id }
+    val matchingSelection = selectedRequest
     val evidence = attemptEvidence(matchingSelection)
     val activeProvider = evidence?.first
     val activeAccountId = evidence?.second
@@ -235,46 +239,62 @@ fun RoutingScreen(
         item { Spacer(modifier = Modifier.height(14.dp)) }
 
         item {
+            val groupTitle = currentGroup?.name
+                ?: selectedRequest?.groupId
+                ?: if (selectedRequest != null) "直连路由" else "等待实时路由"
+            val strategy = currentGroup?.strategyLabel()
             GlassSurface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                shape = RoundedCornerShape(20.dp),
-                onClick = { showGroupPicker = true }
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+                shape = RoundedCornerShape(20.dp)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                        .padding(horizontal = 15.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                        .padding(horizontal = 15.dp, vertical = if (compactGroupHeader) 10.dp else 0.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = currentGroup?.name ?: "选择路由组",
-                            fontSize = MagpieTypography.SubheadStyle.fontSize,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Text(
-                            text = currentGroup?.strategyLabel()?.let { " · $it" } ?: "",
-                            fontSize = MagpieTypography.CaptionStyle.fontSize,
-                            color = colors.textSecondary,
-                            maxLines = 1
-                        )
+                    if (compactGroupHeader) {
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = groupTitle,
+                                style = MagpieTypography.SubheadStyle,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.textPrimary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (strategy != null) Text(
+                                text = strategy,
+                                style = MagpieTypography.CaptionStyle,
+                                color = colors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else {
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = groupTitle,
+                                fontSize = MagpieTypography.SubheadStyle.fontSize,
+                                fontWeight = FontWeight.SemiBold,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (strategy != null) Text(
+                                text = " · $strategy",
+                                fontSize = MagpieTypography.CaptionStyle.fontSize,
+                                color = colors.textSecondary,
+                                maxLines = 1
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Icon(
-                        imageVector = Icons.Filled.ExpandMore,
-                        contentDescription = "选择路由组",
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(16.dp)
+                    Text(
+                        text = if (isFollowingLive) "自动跟随" else "历史固定",
+                        fontSize = MagpieTypography.CaptionStyle.fontSize,
+                        color = colors.accent,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
@@ -319,7 +339,7 @@ fun RoutingScreen(
         }
 
         item {
-            if (!isFollowingLive || matchingSelection?.groupId != currentGroup?.id) {
+            if (!isFollowingLive) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -329,7 +349,7 @@ fun RoutingScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (matchingSelection != null) "正在查看历史请求" else "当前组暂无匹配请求",
+                        text = if (matchingSelection != null) "正在查看历史请求" else "等待实时请求",
                         fontSize = MagpieTypography.LabelStyle.fontSize,
                         color = colors.textSecondary
                     )
@@ -380,7 +400,7 @@ fun RoutingScreen(
         item {
             if (matchingSelection == null && trace?.observable != false) {
                 Text(
-                    text = "当前组暂无匹配请求；可从请求页打开一次调用查看完整经过。",
+                    text = "暂无实时请求；新的调用会自动成为路由焦点。",
                     fontSize = MagpieTypography.LabelStyle.fontSize,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(top = 12.dp)
@@ -394,24 +414,6 @@ fun RoutingScreen(
                     modifier = Modifier.padding(top = 12.dp)
                 )
             }
-        }
-    }
-
-    if (showGroupPicker) {
-        ModalBottomSheet(
-            onDismissRequest = { showGroupPicker = false },
-            containerColor = colors.surface,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-        ) {
-            GroupPickerSheetContent(
-                groups = groups,
-                selectedGroupId = currentGroup?.id,
-                onSelectGroup = {
-                    onSelectGroupId(it)
-                    showGroupPicker = false
-                },
-                onDismiss = { showGroupPicker = false }
-            )
         }
     }
 

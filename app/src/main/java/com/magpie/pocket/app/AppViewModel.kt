@@ -27,8 +27,7 @@ import com.magpie.pocket.core.model.TraceSnapshot
 import com.magpie.pocket.core.model.UsageSnapshot
 import com.magpie.pocket.core.routing.RouteSettle
 import com.magpie.pocket.core.routing.TraceRoutingState
-import com.magpie.pocket.core.routing.chooseLiveRoute
-import com.magpie.pocket.core.routing.chooseRouteForGroup
+import com.magpie.pocket.core.routing.chooseAutoRoute
 import com.magpie.pocket.core.routing.detailFor
 import com.magpie.pocket.core.routing.reduceTraceRouting
 import com.magpie.pocket.core.network.AuthenticationRequiredException
@@ -44,9 +43,11 @@ import com.magpie.pocket.core.security.PreferencesManager
 import com.magpie.pocket.core.util.RequestTimestamps
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 interface ConnectionStateSource {
@@ -61,6 +62,7 @@ interface DisplayPreferencesSource {
     suspend fun updateGlassTier(tier: GlassTier)
     suspend fun updateReduceMotion(enabled: Boolean)
     suspend fun updateMaskAccounts(enabled: Boolean)
+    suspend fun updateKeepLiveConnectionInBackground(enabled: Boolean)
 }
 
 class CredentialStoreConnectionSource(private val store: CredentialStore) : ConnectionStateSource {
@@ -75,6 +77,8 @@ class PreferencesManagerDisplaySource(private val manager: PreferencesManager) :
     override suspend fun updateGlassTier(tier: GlassTier) = manager.updateGlassTier(tier)
     override suspend fun updateReduceMotion(enabled: Boolean) = manager.updateReduceMotion(enabled)
     override suspend fun updateMaskAccounts(enabled: Boolean) = manager.updateMaskAccounts(enabled)
+    override suspend fun updateKeepLiveConnectionInBackground(enabled: Boolean) =
+        manager.updateKeepLiveConnectionInBackground(enabled)
 }
 
 class AppViewModel(
@@ -82,6 +86,9 @@ class AppViewModel(
     private val preferencesManager: DisplayPreferencesSource,
     private val demoRepo: DemoRepository,
     private val apiClient: MagpieApiClient,
+    private val keepaliveController: KeepaliveController = NoOpKeepaliveController,
+    private val heartbeatIntervalMs: Long = 30_000L,
+    private val retryDelaysMs: List<Long> = listOf(1_000L, 2_000L, 4_000L, 8_000L, 15_000L, 30_000L),
     private val clientFactory: (ConnectionConfig) -> MagpieApiClient = { config ->
         MagpieApiClient(
             cfAccessClientId = config.cfAccessClientId,
@@ -90,11 +97,21 @@ class AppViewModel(
     }
 ) : ViewModel() {
 
+    private var activityResumed = false
+    private var serviceActive = false
+    private var lastValidatedAtMs = 0L
+    private var validationPending = false
+    private var notificationPermissionRequestClaimed = false
+
     private val _connectionConfig = MutableStateFlow(credentialStore.getConnection())
     val connectionConfig: StateFlow<ConnectionConfig> = _connectionConfig.asStateFlow()
 
     private val _displayPreferences = MutableStateFlow(DisplayPreferences())
     val displayPreferences: StateFlow<DisplayPreferences> = _displayPreferences.asStateFlow()
+
+    /** False until DataStore has emitted the persisted preferences at least once. */
+    private val _displayPreferencesReady = MutableStateFlow(false)
+    val displayPreferencesReady: StateFlow<Boolean> = _displayPreferencesReady.asStateFlow()
 
     private val _activeTab = MutableStateFlow(AppTab.OVERVIEW)
     val activeTab: StateFlow<AppTab> = _activeTab.asStateFlow()
@@ -187,13 +204,26 @@ class AppViewModel(
     private var detailJob: Job? = null
     private var requestJob: Job? = null
     private var periodJob: Job? = null
+    private var heartbeatJob: Job? = null
+    private var retryJob: Job? = null
+    private var validationJob: Job? = null
     private var selectionGeneration: Long = 0L
+    private var lifecycleStarted = false
+    private var traceGeneration: Long = 0L
+    private var routingTraceGeneration: Long = 0L
 
     init {
         // Collect display preferences
         viewModelScope.launch {
-            preferencesManager.displayPreferencesFlow.collect {
-                _displayPreferences.value = it
+            preferencesManager.displayPreferencesFlow.collect { preferences ->
+                val firstLoad = !_displayPreferencesReady.value
+                _displayPreferences.value = preferences
+                _displayPreferencesReady.value = true
+                if (firstLoad) {
+                    onPreferencesFirstLoaded()
+                } else {
+                    reconcileKeepalive()
+                }
             }
         }
 
@@ -204,12 +234,11 @@ class AppViewModel(
     private fun setupRepository(config: ConnectionConfig) {
         repoGeneration += 1
         val generation = repoGeneration
-        refreshJob?.cancel()
-        traceJob?.cancel()
-        detailJob?.cancel()
-        requestJob?.cancel()
-        periodJob?.cancel()
+        cancelAllNetworkJobs()
         selectionGeneration += 1
+        lastValidatedAtMs = 0L
+        validationPending = false
+        _isLoading.value = false
 
         // Never let a previous connection's in-memory Magpie session leak into a new one.
         activeLiveClient?.cookieJar?.clear()
@@ -229,6 +258,8 @@ class AppViewModel(
         _routeSettle.value = null
         routingTraceState = TraceRoutingState()
         consumedSettleToken = 0L
+        traceGeneration = 0L
+        routingTraceGeneration = 0L
         _capabilities.value = null
         _errorMessage.value = null
         _selectedGroupId.value = null
@@ -255,82 +286,34 @@ class AppViewModel(
             demoRepo
         }
 
-        refreshAll(generation)
+        reconcileKeepalive()
+        when {
+            config.mode == DataMode.DEMO -> refreshAll(generation)
+            runtimeMayRun(generation) -> requestRecovery()
+        }
     }
 
     fun refreshAll() {
-        refreshAll(repoGeneration)
+        val generation = repoGeneration
+        if (!runtimePermitted(generation)) return
+        validationPending = false
+        if (_connectionConfig.value.mode == DataMode.DEMO) {
+            refreshAll(generation)
+            return
+        }
+        clearAuthFailureForExplicitRetry()
+        cancelAllNetworkJobs()
+        startRecovery(generation)
     }
 
     private fun refreshAll(generation: Long) {
-        refreshJob?.cancel()
+        if (!runtimeMayRun(generation)) return
+        cancelRefreshAndRetry()
         refreshJob = viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
-            if (_connectionConfig.value.mode == DataMode.LIVE && !isAuthFailureState()) {
-                _connectionStatus.value = ConnectionStatus(ConnectionHealth.CONNECTING)
-            }
-
             try {
-                // Probe first: for live connections this establishes the Magpie session
-                // (using the encrypted Web Key) before any protected API load or trace.
-                val cap = activeRepo.probe()
-                if (generation != repoGeneration) return@launch
-                _capabilities.value = cap
-
-                // Load overview
-                if (cap.usage) {
-                    val ov = activeRepo.overview(_selectedPeriod.value)
-                    if (generation != repoGeneration) return@launch
-                    _overview.value = ov
-                }
-
-                // Optional groups/accounts are only requested when the probe
-                // verified the endpoint.
-                if (cap.groups) {
-                    val grps = activeRepo.groups()
-                    if (generation != repoGeneration) return@launch
-                    _groups.value = grps
-                    if (_selectedGroupId.value !in grps.map { it.id } && grps.isNotEmpty()) {
-                        _selectedGroupId.value = grps.first().id
-                    }
-
-                    val accs = activeRepo.accounts()
-                    if (generation != repoGeneration) return@launch
-                    _accounts.value = accs
-                }
-
-                // Load usage
-                if (cap.usage) {
-                    val us = activeRepo.usage(_selectedPeriod.value)
-                    if (generation != repoGeneration) return@launch
-                    _usage.value = us
-                }
-
-                // Load quotas
-                if (cap.quotas) {
-                    val qts = activeRepo.quotas()
-                    if (generation != repoGeneration) return@launch
-                    _quotas.value = qts
-                }
-
-                // Load requests
-                if (cap.ledger) loadRequests(generation = generation)
-
-                if (generation != repoGeneration) return@launch
-                // A request load may already have hit a sticky auth failure.
-                if (isAuthFailureState()) return@launch
-                _isOnline.value = true
-                _connectionStatus.value = ConnectionStatus(ConnectionHealth.CONNECTED)
-                if (cap.trace) {
-                    startObservingTrace(generation)
-                } else {
-                    traceJob?.cancel()
-                    _trace.value = TraceSnapshot(
-                        epoch = "",
-                        seq = 0L,
-                        observable = false
-                    )
+                performRefresh(generation)
+                if (generation == repoGeneration) {
+                    lastValidatedAtMs = System.currentTimeMillis()
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -343,6 +326,74 @@ class AppViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Loads one complete snapshot. Callers own retry/backoff; this method never
+     * swallows failures or starts a second recovery owner.
+     */
+    private suspend fun performRefresh(generation: Long) {
+        if (!runtimeMayRun(generation)) return
+        _isLoading.value = true
+        _errorMessage.value = null
+        if (_connectionConfig.value.mode == DataMode.LIVE && !isAuthFailureState()) {
+            _connectionStatus.value = ConnectionStatus(ConnectionHealth.CONNECTING)
+        }
+
+        // Probe first: for live connections this establishes the Magpie session
+        // (using the encrypted Web Key) before any protected API load or trace.
+        val cap = activeRepo.probe()
+        if (generation != repoGeneration) return
+        _capabilities.value = cap
+
+        if (cap.usage) {
+            val ov = activeRepo.overview(_selectedPeriod.value)
+            if (generation != repoGeneration) return
+            _overview.value = ov
+        }
+
+        if (cap.groups) {
+            val grps = activeRepo.groups()
+            if (generation != repoGeneration) return
+            _groups.value = grps
+            val accs = activeRepo.accounts()
+            if (generation != repoGeneration) return
+            _accounts.value = accs
+        }
+
+        if (cap.usage) {
+            val us = activeRepo.usage(_selectedPeriod.value)
+            if (generation != repoGeneration) return
+            _usage.value = us
+        }
+
+        if (cap.quotas) {
+            val qts = activeRepo.quotas()
+            if (generation != repoGeneration) return
+            _quotas.value = qts
+        }
+
+        if (cap.ledger) loadRequests(generation = generation)
+
+        if (generation != repoGeneration) return
+        if (isAuthFailureState()) return
+        if (!runtimeMayRun(generation)) return
+        markConnected()
+        lastValidatedAtMs = System.currentTimeMillis()
+        validationPending = false
+        if (cap.trace) {
+            ensureTraceLoop(generation)
+        } else {
+            traceJob?.cancel()
+            traceJob = null
+            _trace.value = TraceSnapshot(
+                epoch = "",
+                seq = 0L,
+                observable = false
+            )
+        }
+        ensureHeartbeatLoop(generation)
+        reconcileKeepalive()
     }
 
     private fun isAuthFailure(error: Throwable): Boolean =
@@ -359,7 +410,7 @@ class AppViewModel(
         if (generation != repoGeneration) return
         val status = statusFor(error)
         if (isAuthFailure(error)) {
-            traceJob?.cancel()
+            cancelAllNetworkJobs()
             _isOnline.value = false
             _connectionStatus.value = status
             _errorMessage.value = status.message
@@ -405,40 +456,428 @@ class AppViewModel(
         else -> ConnectionStatus(ConnectionHealth.OFFLINE, "连接服务失败，请稍后重试。")
     }
 
+    private fun ensureTraceLoop(generation: Long) {
+        if (!runtimeMayRun(generation) || _capabilities.value?.trace != true) return
+        if (traceJob?.isActive == true) return
+        startObservingTrace(generation)
+    }
+
+    private fun ensureHeartbeatLoop(generation: Long) {
+        if (_connectionConfig.value.mode != DataMode.LIVE) return
+        if (!runtimeMayRun(generation) || _capabilities.value == null) return
+        if (heartbeatJob?.isActive == true) return
+        startHeartbeat(generation)
+    }
+
     private fun startObservingTrace(generation: Long) {
         traceJob?.cancel()
         traceJob = viewModelScope.launch {
+            var failures = 0
+            while (isActive && generation == repoGeneration) {
+                if (!runtimeMayRun(generation)) return@launch
+                try {
+                    activeRepo.observeTrace().collect { tr ->
+                        if (generation != repoGeneration || !runtimeMayRun(generation)) return@collect
+                        // A current-connection auth failure is sticky; an already
+                        // in-flight trace emission must not clear it.
+                        if (isAuthFailureState()) return@collect
+                        failures = 0
+                        applyTraceSnapshot(tr)
+                    }
+                    // The repository flow ended without cancellation: treat it as a
+                    // recoverable interruption and re-establish the session.
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (generation != repoGeneration) return@launch
+                    handleFailure(e, generation)
+                    if (!isRetryable(e)) return@launch
+                }
+                if (generation != repoGeneration || !runtimeMayRun(generation)) return@launch
+                failures += 1
+                delay(retryDelay(failures))
+            }
+        }
+    }
+
+    private fun startHeartbeat(generation: Long) {
+        heartbeatJob?.cancel()
+        heartbeatJob = viewModelScope.launch {
+            while (isActive && generation == repoGeneration) {
+                delay(heartbeatIntervalMs)
+                if (generation != repoGeneration) return@launch
+                if (!runtimeMayRun(generation)) continue
+                try {
+                    activeRepo.probeLight()
+                    if (generation != repoGeneration || !runtimeMayRun(generation)) return@launch
+                    // A successful /api/state is a health signal, never permission to
+                    // erase an auth/access failure from another endpoint.
+                    if (!isAuthFailureState()) {
+                        lastValidatedAtMs = System.currentTimeMillis()
+                        markConnected()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (generation != repoGeneration) return@launch
+                    handleFailure(e, generation)
+                    if (!isRetryable(e)) return@launch
+                }
+            }
+        }
+    }
+
+    private fun retryDelay(failures: Int): Long =
+        retryDelaysMs[(failures - 1).coerceIn(0, retryDelaysMs.lastIndex)]
+
+    private fun isRetryable(error: Throwable): Boolean = when (error) {
+        is AuthenticationRequiredException,
+        is PermissionDeniedException,
+        is CloudflareAccessRequiredException,
+        is UnexpectedResponseException -> false
+        is NetworkUnavailableException -> true
+        is MagpieApiException -> error.statusCode == null || error.statusCode in 500..599
+        else -> false
+    }
+
+    private fun markConnected() {
+        if (isAuthFailureState()) return
+        if (!runtimeMayRun(repoGeneration)) return
+        _isOnline.value = true
+        _connectionStatus.value = ConnectionStatus(ConnectionHealth.CONNECTED)
+        _errorMessage.value = null
+    }
+
+    /** Demo is local; LIVE networking requires foreground or an active opted-in service. */
+    private fun runtimeMayRun(generation: Long): Boolean {
+        if (generation != repoGeneration) return false
+        if (_connectionConfig.value.mode == DataMode.DEMO) return true
+        if (isAuthFailureState()) return false
+        return runtimePermitted(generation)
+    }
+
+    /** Explicit user actions may retry after auth recovery; automatic signals never use this. */
+    private fun runtimePermitted(generation: Long): Boolean {
+        if (generation != repoGeneration) return false
+        if (_connectionConfig.value.mode == DataMode.DEMO) return true
+        return activityResumed ||
+            (_displayPreferencesReady.value &&
+                _displayPreferences.value.keepLiveConnectionInBackground &&
+                serviceActive)
+    }
+
+    private fun clearAuthFailureForExplicitRetry() {
+        if (!isAuthFailureState()) return
+        _connectionStatus.value = ConnectionStatus(ConnectionHealth.CONNECTING)
+        _isOnline.value = false
+        _errorMessage.value = null
+    }
+
+    fun onActivityStarted() {
+        lifecycleStarted = true
+        reconcileKeepalive()
+    }
+
+    fun onActivityResumed() {
+        val wasResumed = activityResumed
+        lifecycleStarted = true
+        activityResumed = true
+        if (_connectionConfig.value.mode == DataMode.DEMO) return
+        ensureRuntimeLoops()
+        if (!wasResumed) requestRuntimeValidation()
+        reconcileKeepalive()
+    }
+
+    fun onActivityPaused() {
+        activityResumed = false
+        pauseOrStopRuntime()
+    }
+
+    fun onActivityStopped() {
+        lifecycleStarted = false
+        activityResumed = false
+        pauseOrStopRuntime()
+    }
+
+    fun onKeepaliveServiceActive(active: Boolean) {
+        val wasActive = serviceActive
+        serviceActive = active
+        if (active) {
+            keepaliveController.onServiceActive()
+            if (!wasActive && runtimeMayRun(repoGeneration)) {
+                ensureRuntimeLoops()
+                requestRuntimeValidation()
+            }
+        } else {
+            keepaliveController.onServiceInactive()
+            pauseOrStopRuntime()
+        }
+    }
+
+    fun onNetworkAvailable() {
+        if (_connectionConfig.value.mode != DataMode.LIVE) return
+        validationPending = true
+        requestRecovery()
+    }
+
+    fun onKeepalivePreferenceChanged(enabled: Boolean) {
+        reconcileKeepalive()
+    }
+
+    /**
+     * Claims the one process-lifetime notification prompt. Activity recreation must
+     * not show the permission dialog again after the user denies it.
+     */
+    fun claimNotificationPermissionRequest(): Boolean {
+        if (notificationPermissionRequestClaimed) return false
+        notificationPermissionRequestClaimed = true
+        return true
+    }
+
+    private fun pauseOrStopRuntime() {
+        if (activityResumed) return
+        val preferencesReady = _displayPreferencesReady.value
+        if (!preferencesReady) {
+            // An OS-recreated service may already be promoted while DataStore is
+            // still loading. Do not run background work, but let that service wait
+            // for the definitive preference instead of stopping it on the default.
+            stopBackgroundNetwork()
+            if (!serviceActive) keepaliveController.stop()
+            return
+        }
+        val keep = _connectionConfig.value.mode == DataMode.LIVE &&
+            _displayPreferences.value.keepLiveConnectionInBackground &&
+            serviceActive
+        if (!keep) {
+            stopBackgroundNetwork()
+        }
+        // A service requested while the Activity was visible may still be starting
+        // when Home is pressed. Let that valid start finish; networking remains
+        // paused until the service reports foreground promotion.
+        val mayKeepServiceStarting = _connectionConfig.value.mode == DataMode.LIVE &&
+            _displayPreferences.value.keepLiveConnectionInBackground
+        if (!mayKeepServiceStarting) {
+            keepaliveController.stop()
+        }
+    }
+
+    private fun onPreferencesFirstLoaded() {
+        // A sticky service may have been recreated by the OS before DataStore
+        // delivered the saved preference. Now that the choice is definitive,
+        // either recover the opted-in runtime or tear everything down promptly.
+        if (serviceActive && !activityResumed) {
+            val live = _connectionConfig.value.mode == DataMode.LIVE
+            if (live && _displayPreferences.value.keepLiveConnectionInBackground) {
+                ensureRuntimeLoops()
+                requestRuntimeValidation()
+            } else {
+                stopBackgroundNetwork()
+            }
+        }
+        reconcileKeepalive()
+    }
+
+    private fun reconcileKeepalive() {
+        if (!_displayPreferencesReady.value) {
+            // Never start a foreground service from the default preference value.
+            // Foreground LIVE networking remains available through activityResumed.
+            if (!activityResumed) stopBackgroundNetwork()
+            if (!serviceActive) keepaliveController.stop()
+            return
+        }
+        val live = _connectionConfig.value.mode == DataMode.LIVE
+        val enabled = _displayPreferences.value.keepLiveConnectionInBackground
+        val visible = lifecycleStarted || activityResumed
+        val shouldRun = live && enabled && (visible || serviceActive)
+        if (shouldRun) {
+            keepaliveController.start()
+        } else {
+            keepaliveController.stop()
+            if (!activityResumed) stopBackgroundNetwork()
+        }
+    }
+
+    private fun stopBackgroundNetwork() {
+        // Demo data is local and remains available while the Activity is backgrounded.
+        if (_connectionConfig.value.mode == DataMode.DEMO) return
+        cancelAllNetworkJobs()
+        validationPending = false
+        _isLoading.value = false
+    }
+
+    private fun cancelRefreshAndRetry() {
+        refreshJob?.cancel()
+        refreshJob = null
+        retryJob?.cancel()
+        retryJob = null
+    }
+
+    private fun cancelRuntimeJobs() {
+        validationJob?.cancel()
+        validationJob = null
+        refreshJob?.cancel()
+        refreshJob = null
+        traceJob?.cancel()
+        traceJob = null
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        retryJob?.cancel()
+        retryJob = null
+    }
+
+    private fun cancelAllNetworkJobs() {
+        cancelRuntimeJobs()
+        requestJob?.cancel()
+        requestJob = null
+        detailJob?.cancel()
+        detailJob = null
+        periodJob?.cancel()
+        periodJob = null
+    }
+
+    private fun ensureRuntimeLoops() {
+        val generation = repoGeneration
+        if (!runtimeMayRun(generation)) return
+        if (_capabilities.value?.trace == true) ensureTraceLoop(generation)
+        ensureHeartbeatLoop(generation)
+    }
+
+    /** Foreground/network/service signals share one bounded, deduplicated recovery loop. */
+    private fun requestRecovery() {
+        val generation = repoGeneration
+        if (_connectionConfig.value.mode != DataMode.LIVE) return
+        if (!runtimeMayRun(generation)) return
+        if (isAuthFailureState()) return
+        if (retryJob?.isActive == true) return
+        if (refreshJob?.isActive == true) return
+        if (validationJob?.isActive == true) return
+
+        if (_capabilities.value == null) {
+            validationPending = false
+            startRecovery(generation)
+            return
+        }
+
+        if (validationPending) {
+            validationPending = false
+            startLightweightValidation(generation)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val recentlyValidated = lastValidatedAtMs > 0L &&
+            now - lastValidatedAtMs < heartbeatIntervalMs
+        val loopsAlive = heartbeatJob?.isActive == true &&
+            (_capabilities.value?.trace != true || traceJob?.isActive == true)
+        if (recentlyValidated && loopsAlive && _connectionStatus.value.health == ConnectionHealth.CONNECTED) {
+            return
+        }
+        startRecovery(generation)
+    }
+
+    private fun startRecovery(generation: Long) {
+        if (retryJob?.isActive == true || refreshJob?.isActive == true) return
+        validationJob?.cancel()
+        validationJob = null
+        refreshJob?.cancel()
+        refreshJob = null
+        retryJob?.cancel()
+        retryJob = viewModelScope.launch {
+            var attempt = 0
             try {
-                activeRepo.observeTrace().collect { tr ->
-                    if (generation != repoGeneration) return@collect
-                    // A current-connection auth failure is sticky; an already
-                    // in-flight trace emission must not clear it.
-                    if (isAuthFailureState()) return@collect
-                    applyTraceSnapshot(tr)
+                while (isActive && generation == repoGeneration) {
+                    if (!runtimeMayRun(generation)) return@launch
+                    try {
+                        // A fresh probe/load repairs both initial startup and a stale status.
+                        performRefresh(generation)
+                        if (generation != repoGeneration) return@launch
+                        lastValidatedAtMs = System.currentTimeMillis()
+                        validationPending = false
+                        ensureRuntimeLoops()
+                        return@launch
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (generation != repoGeneration) return@launch
+                        handleFailure(e, generation, clearTrace = true)
+                        if (!isRetryable(e) || isAuthFailureState()) return@launch
+                        val wait = retryDelaysMs.getOrElse(attempt) { retryDelaysMs.lastOrNull() ?: 0L }
+                        if (attempt < retryDelaysMs.lastIndex) attempt += 1
+                        delay(wait)
+                    }
+                }
+            } finally {
+                if (generation == repoGeneration) {
+                    _isLoading.value = false
+                }
+            }
+        }
+    }
+
+    private fun requestRuntimeValidation() {
+        if (_connectionConfig.value.mode != DataMode.LIVE) return
+        validationPending = true
+        requestRecovery()
+    }
+
+    /** A resume/network signal validates without replacing a healthy long-poll trace job. */
+    private fun startLightweightValidation(generation: Long) {
+        validationJob?.cancel()
+        validationJob = viewModelScope.launch {
+            try {
+                activeRepo.probeLight()
+                if (
+                    generation == repoGeneration &&
+                    runtimeMayRun(generation) &&
+                    !isAuthFailureState()
+                ) {
+                    lastValidatedAtMs = System.currentTimeMillis()
+                    markConnected()
+                    ensureRuntimeLoops()
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (generation != repoGeneration) return@launch
                 handleFailure(e, generation)
+                if (isRetryable(e) && !isAuthFailureState() && runtimeMayRun(generation)) {
+                    startRecovery(generation)
+                }
+            } finally {
+                if (generation == repoGeneration) validationPending = false
             }
         }
     }
 
     internal fun applyTraceSnapshot(tr: TraceSnapshot) {
-        // The trace carries full recent routes, so live focus does not need a
-        // serial requestDetail call for every emission.
-        val liveBefore = chooseLiveRoute(_trace.value, _selectedGroupId.value)
+        if (isAuthFailureState()) return
+        if (_connectionConfig.value.mode == DataMode.LIVE && !runtimeMayRun(repoGeneration)) return
+        // Trace evidence can only bind to the current live epoch. When an epoch
+        // restarts, the ledger belongs to the previous epoch and must not select a
+        // new live route by a recycled route id.
+        val previousEpoch = _trace.value?.epoch
+        val epochRestarted = tr.restarted || (previousEpoch != null && previousEpoch != tr.epoch)
+        if (epochRestarted) {
+            traceGeneration += 1
+            // Old ledger rows cannot become evidence for the new epoch. This also
+            // covers later snapshots that no longer carry the one-shot restart flag.
+            requestJob?.cancel()
+            requestJob = null
+            _requestsPage.value = null
+        }
         _trace.value = tr
         _isOnline.value = true
         _connectionStatus.value = ConnectionStatus(ConnectionHealth.CONNECTED)
+        lastValidatedAtMs = System.currentTimeMillis()
+
+        val ledger = if (epochRestarted) emptyList() else _requestsPage.value?.items.orEmpty()
         routingTraceState = reduceTraceRouting(
             routingTraceState,
             tr,
             selectedGroupId = _selectedGroupId.value,
-            focusedRouteId = liveBefore?.key?.routeId ?: _routingRequest.value?.key?.routeId
+            focusedRouteId = _routingRequest.value?.key?.routeId
         )
-        if (tr.restarted) {
+        if (epochRestarted) {
             consumedSettleToken = 0L
             _routeSettle.value = null
         }
@@ -454,27 +893,44 @@ class AppViewModel(
             .filter { it.key.routeId in runningIds }
             .maxByOrNull { RequestTimestamps.parseMillis(it.startedAt) ?: Long.MIN_VALUE }
 
-        val live = chooseLiveRoute(tr, _selectedGroupId.value)
-
-        if (tr.restarted && _isFollowingLive.value && live == null) {
-            _routingRequest.value = null
-            _routingDetail.value = null
-            if (!_isRequestDetailOpen.value) {
-                _selectedRequest.value = null
-                _selectedRequestDetail.value = null
+        if (_isFollowingLive.value) {
+            val live = chooseAutoRoute(tr, ledger)
+            if (live != null) {
+                _selectedGroupId.value = live.groupId
+                _routingRequest.value = live
+                _routingDetail.value = tr.detailFor(live)
+                if (!_isRequestDetailOpen.value) _selectedRequest.value = live
+            } else {
+                _routingRequest.value = null
+                _routingDetail.value = null
+                _selectedGroupId.value = null
+                if (!_isRequestDetailOpen.value) {
+                    _selectedRequest.value = null
+                    _selectedRequestDetail.value = null
+                }
             }
-        } else if (_isFollowingLive.value && live != null) {
-            _routingRequest.value = live
-            _routingDetail.value = tr.detailFor(live)
-            if (!_isRequestDetailOpen.value) _selectedRequest.value = live
-        } else {
-            val focused = _routingRequest.value ?: return
-            val refreshed = tr.recentRoutes.find { it.key.routeId == focused.key.routeId }
-            val detail = refreshed?.let { tr.detailFor(it) }
+            return
+        }
+
+        // A historical pin keeps its own group identity. Only refresh the pinned
+        // route when the exact connection/epoch/route key still exists.
+        val focused = _routingRequest.value ?: return
+        if (epochRestarted) {
+            // Keep the historical summary visible as pinned/unavailable, but detach
+            // it from new-epoch evidence. Do not bind by route id alone.
+            _routingDetail.value = null
+        } else if (routingTraceGeneration == traceGeneration) {
+            val refreshed = tr.recentRoutes.find { route ->
+                route.key.connectionId == focused.key.connectionId &&
+                    route.key.epoch == focused.key.epoch &&
+                    route.key.routeId == focused.key.routeId
+            }
             if (refreshed != null) {
                 _routingRequest.value = refreshed
-                _routingDetail.value = detail ?: _routingDetail.value
+                _routingDetail.value = tr.detailFor(refreshed) ?: _routingDetail.value
             }
+        } else {
+            _routingDetail.value = null
         }
     }
 
@@ -519,6 +975,8 @@ class AppViewModel(
         _selectedRequest.value = request
         _routingRequest.value = request
         _isFollowingLive.value = false
+        routingTraceGeneration = traceGeneration
+        _selectedGroupId.value = request.groupId
         _isRequestDetailOpen.value = true
         _selectedRequestDetail.value = _trace.value?.detailFor(request)
         loadRequestDetail(request, selectionGeneration)
@@ -532,16 +990,23 @@ class AppViewModel(
         _selectedRequest.value = request
         _routingRequest.value = request
         _isFollowingLive.value = false
+        routingTraceGeneration = traceGeneration
+        _selectedGroupId.value = request?.groupId
         _routingDetail.value = request?.let { _trace.value?.detailFor(it) }
         if (request != null) loadRequestDetail(request, selectionGeneration)
     }
 
     private fun loadRoutingDetail(request: RequestSummary, generation: Long) {
         detailJob?.cancel()
+        val expectedTraceGeneration = traceGeneration
         detailJob = viewModelScope.launch {
             try {
                 val detail = activeRepo.requestDetail(request.key)
-                if (generation == selectionGeneration && _routingRequest.value?.key == request.key) {
+                if (
+                    generation == selectionGeneration &&
+                    expectedTraceGeneration == traceGeneration &&
+                    _routingRequest.value?.key == request.key
+                ) {
                     _routingDetail.value = detail
                 }
             } catch (_: Exception) {}
@@ -560,6 +1025,7 @@ class AppViewModel(
 
     private fun loadRequestDetail(request: RequestSummary, generation: Long) {
         detailJob?.cancel()
+        val expectedTraceGeneration = traceGeneration
         detailJob = viewModelScope.launch {
             try {
                 val detail = activeRepo.requestDetail(request.key)
@@ -567,6 +1033,7 @@ class AppViewModel(
                 // response for request A can never overwrite the current request B.
                 if (
                     generation == selectionGeneration &&
+                    expectedTraceGeneration == traceGeneration &&
                     _selectedRequest.value?.key == request.key
                 ) {
                     _selectedRequestDetail.value = detail
@@ -584,32 +1051,17 @@ class AppViewModel(
         _activeTab.value = tab
     }
 
-    fun selectGroupId(groupId: String) {
-        _selectedGroupId.value = groupId
-        _isFollowingLive.value = true
-        consumedSettleToken = routingTraceState.settle?.token ?: consumedSettleToken
-        _routeSettle.value = null
-        routingTraceState = TraceRoutingState(runningIds = _trace.value?.runningRouteIds?.toSet() ?: emptySet())
-        selectionGeneration += 1
-        detailJob?.cancel()
-        _selectedRequest.value = null
-        _selectedRequestDetail.value = null
-        _routingDetail.value = null
-        reconcileRoutingSelection(_requestsPage.value?.items ?: emptyList(), force = true)
-    }
-
     /**
-     * Keeps routing's focused request aligned with the viewed group. A missing match clears
-     * the focus instead of leaving a request from a different group on screen.
+     * Automatic routing focus is global and always follows the actual request. A missing
+     * match clears the focus instead of leaving a request from another group on screen.
      */
     private fun reconcileRoutingSelection(items: List<RequestSummary>, force: Boolean = false) {
-        val groupId = _selectedGroupId.value ?: return
         val current = _routingRequest.value
-        val stillMatches = current != null && current.groupId == groupId
-        if (!force && stillMatches) return
+        val auto = chooseAutoRoute(_trace.value, items)
+        if (!force && _isFollowingLive.value && current?.key == auto?.key) return
         if (!_isFollowingLive.value && current != null) return
 
-        val latest = chooseRouteForGroup(_trace.value, groupId, items)
+        val latest = auto
         if (latest == null) {
             selectionGeneration += 1
             detailJob?.cancel()
@@ -619,8 +1071,6 @@ class AppViewModel(
             _routingDetail.value = null
         } else if (_isFollowingLive.value) {
             focusLiveRoute(latest)
-        } else {
-            selectRoutingRequest(latest)
         }
     }
 
@@ -628,6 +1078,7 @@ class AppViewModel(
         selectionGeneration += 1
         detailJob?.cancel()
         _routingRequest.value = request
+        _selectedGroupId.value = request.groupId
         if (!_isRequestDetailOpen.value) _selectedRequest.value = request
         _routingDetail.value = _trace.value?.detailFor(request)
     }
@@ -672,14 +1123,20 @@ class AppViewModel(
         _isFollowingLive.value = true
         consumedSettleToken = routingTraceState.settle?.token ?: consumedSettleToken
         _routeSettle.value = null
-        val groupId = _selectedGroupId.value
-        val latest = chooseRouteForGroup(
+        val latest = chooseAutoRoute(
             _trace.value,
-            groupId,
             _requestsPage.value?.items ?: emptyList()
         )
+        _selectedGroupId.value = latest?.groupId
         if (latest != null) {
             focusLiveRoute(latest)
+        } else {
+            _routingRequest.value = null
+            _routingDetail.value = null
+            if (!_isRequestDetailOpen.value) {
+                _selectedRequest.value = null
+                _selectedRequestDetail.value = null
+            }
         }
     }
 
@@ -727,5 +1184,18 @@ class AppViewModel(
 
     fun updateMaskAccounts(enabled: Boolean) {
         viewModelScope.launch { preferencesManager.updateMaskAccounts(enabled) }
+    }
+
+    fun updateKeepLiveConnectionInBackground(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesManager.updateKeepLiveConnectionInBackground(enabled)
+            onKeepalivePreferenceChanged(enabled)
+        }
+    }
+
+    override fun onCleared() {
+        cancelAllNetworkJobs()
+        keepaliveController.stop()
+        super.onCleared()
     }
 }

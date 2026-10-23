@@ -20,12 +20,14 @@ class PreferencesManager(private val context: Context) {
         val glassTierStr = prefs[KEY_GLASS_TIER] ?: GlassTier.CLEAR.name
         val reduceMotion = prefs[KEY_REDUCE_MOTION] ?: false
         val maskAccounts = prefs[KEY_MASK_ACCOUNTS] ?: true
+        val keepLiveConnection = prefs[KEY_KEEP_LIVE_CONNECTION] ?: true
 
         DisplayPreferences(
             themeMode = try { ThemeMode.valueOf(themeModeStr) } catch (_: Exception) { ThemeMode.SYSTEM },
             glassTier = try { GlassTier.valueOf(glassTierStr) } catch (_: Exception) { GlassTier.CLEAR },
             reduceMotion = reduceMotion,
-            maskAccountNames = maskAccounts
+            maskAccountNames = maskAccounts,
+            keepLiveConnectionInBackground = keepLiveConnection
         )
     }
 
@@ -61,6 +63,12 @@ class PreferencesManager(private val context: Context) {
         }
     }
 
+    suspend fun updateKeepLiveConnectionInBackground(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_KEEP_LIVE_CONNECTION] = enabled
+        }
+    }
+
     suspend fun saveLastActiveTab(tab: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_LAST_ACTIVE_TAB] = tab
@@ -78,6 +86,7 @@ class PreferencesManager(private val context: Context) {
         private val KEY_GLASS_TIER = stringPreferencesKey("pref_glass_tier")
         private val KEY_REDUCE_MOTION = booleanPreferencesKey("pref_reduce_motion")
         private val KEY_MASK_ACCOUNTS = booleanPreferencesKey("pref_mask_accounts")
+        private val KEY_KEEP_LIVE_CONNECTION = booleanPreferencesKey("pref_keep_live_connection")
         private val KEY_LAST_ACTIVE_TAB = stringPreferencesKey("pref_last_tab")
         private val KEY_LAST_GROUP_ID = stringPreferencesKey("pref_last_group_id")
     }

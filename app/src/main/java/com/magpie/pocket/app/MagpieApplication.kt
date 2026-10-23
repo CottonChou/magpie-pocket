@@ -20,6 +20,17 @@ class MagpieApplication : Application() {
     lateinit var apiClient: MagpieApiClient
         private set
 
+    /** One process-owned runtime shared by every Activity and the foreground service. */
+    val appViewModel: AppViewModel by lazy {
+        AppViewModel(
+            credentialStore = CredentialStoreConnectionSource(credentialStore),
+            preferencesManager = PreferencesManagerDisplaySource(preferencesManager),
+            demoRepo = demoRepository,
+            apiClient = apiClient,
+            keepaliveController = AndroidKeepaliveController(this)
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this

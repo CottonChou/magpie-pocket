@@ -18,7 +18,8 @@ import com.magpie.pocket.core.model.GlassTier
 import com.magpie.pocket.core.model.ThemeMode
 import com.magpie.pocket.core.network.MagpieApiClient
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -39,6 +40,9 @@ import java.io.File
 @OptIn(ExperimentalCoroutinesApi::class)
 class RequestSelectionStateTest {
 
+    @get:org.junit.Rule
+    val testTimeout = org.junit.rules.Timeout.seconds(10)
+
     private val testDispatcher = UnconfinedTestDispatcher()
     private val createdViewModels = mutableListOf<AppViewModel>()
 
@@ -49,7 +53,9 @@ class RequestSelectionStateTest {
 
     @After
     fun tearDown() {
-        createdViewModels.forEach { it.viewModelScope.cancel() }
+        runBlocking {
+            createdViewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() }
+        }
         createdViewModels.clear()
         Dispatchers.resetMain()
     }
@@ -85,33 +91,31 @@ class RequestSelectionStateTest {
     @Test
     fun changingGroupClearsMismatchedRoutingSelection() = runBlocking {
         val viewModel = newViewModel()
-        val first = viewModel.requestsPage.first { it != null }!!.items.first()
-        viewModel.selectRoutingRequest(first)
+        val historical = viewModel.requestsPage.first { it != null }!!.items.first()
+        viewModel.selectRoutingRequest(historical)
+        assertFalse(viewModel.isFollowingLive.first())
 
-        val emptyGroup = com.magpie.pocket.core.model.RouteGroup(
-            id = "no-request-group",
-            name = "No request group"
-        )
-        val matchingPage = viewModel.requestsPage.first()!!
-        val groups = viewModel.groups.first()
-        assertTrue(groups.isNotEmpty())
-        viewModel.selectGroupId(emptyGroup.id)
+        // Manual group browsing no longer exists: resuming live auto-follow must
+        // reconcile against actual request evidence, not a previously pinned group.
+        viewModel.resetToLatest()
+        val live = request("g-1", "free-deepseek4.1", FinalState.IN_PROGRESS, "2026-10-22T12:00:09Z")
+        viewModel.applyTraceSnapshot(trace(listOf("g-1"), listOf(live)))
 
-        assertNull(viewModel.selectedRequest.first())
-        assertNull(viewModel.selectedRequestDetail.first())
-        assertTrue(matchingPage.items.isNotEmpty())
+        assertEquals("g-1", viewModel.routingRequest.first()?.key?.routeId)
+        assertEquals("free-deepseek4.1", viewModel.selectedGroupId.first())
+        assertTrue(viewModel.isFollowingLive.first())
     }
 
     @Test
     fun changingGroupSelectsLatestMatchingRequest() = runBlocking {
         val viewModel = newViewModel()
-        val page = viewModel.requestsPage.first { it != null }!!
-        val dailyRequest = page.items.first { it.groupId == "daily-coding" }
-        viewModel.selectRoutingRequest(page.items.first())
+        val older = request("daily-old", "daily-coding", FinalState.IN_PROGRESS, "2026-10-22T12:00:01Z")
+        val newer = request("daily-new", "daily-coding", FinalState.IN_PROGRESS, "2026-10-22T12:00:05Z")
+        viewModel.applyTraceSnapshot(trace(listOf("daily-old", "daily-new"), listOf(older, newer)))
 
-        viewModel.selectGroupId("daily-coding")
-
-        assertEquals(dailyRequest.key.routeId, viewModel.selectedRequest.first()?.key?.routeId)
+        // Focus follows the actual newest live request without any group selection call.
+        assertEquals("daily-new", viewModel.routingRequest.first()?.key?.routeId)
+        assertEquals("daily-coding", viewModel.selectedGroupId.first())
         assertFalse(viewModel.isRequestDetailOpen.first())
     }
 
@@ -119,7 +123,6 @@ class RequestSelectionStateTest {
     fun liveTraceAdvancesFocusAndCompletionSettlesOnce() = runBlocking {
         val viewModel = newViewModel()
         val page = viewModel.requestsPage.first { it != null }!!
-        viewModel.selectGroupId("free-deepseek4.1")
         viewModel.resetToLatest()
 
         val running = request("900", "free-deepseek4.1", FinalState.IN_PROGRESS, "2026-10-22T12:00:09Z")
@@ -141,7 +144,6 @@ class RequestSelectionStateTest {
         val viewModel = newViewModel()
         val page = viewModel.requestsPage.first { it != null }!!
         val historical = page.items.first { it.key.routeId == "102" }
-        viewModel.selectGroupId("free-deepseek4.1")
         viewModel.selectRoutingRequest(historical)
         assertFalse(viewModel.isFollowingLive.first())
 
@@ -163,14 +165,15 @@ class RequestSelectionStateTest {
     @Test
     fun otherGroupAndConnectionSwitchCannotLeakRoute() = runBlocking {
         val viewModel = newViewModel()
-        viewModel.selectGroupId("free-deepseek4.1")
         val other = request("902", "daily-coding", FinalState.IN_PROGRESS, "2026-10-22T12:00:09Z")
         viewModel.applyTraceSnapshot(trace(listOf("902"), listOf(other)))
-        assertTrue(viewModel.routingRequest.first()?.groupId != "daily-coding")
-
-        viewModel.selectGroupId("daily-coding")
-        viewModel.applyTraceSnapshot(trace(listOf("902"), listOf(other)))
+        // Automatic focus is global: the actual running request in any group wins.
         assertEquals("902", viewModel.routingRequest.first()?.key?.routeId)
+        assertEquals("daily-coding", viewModel.selectedGroupId.first())
+
+        val own = request("908", "free-deepseek4.1", FinalState.IN_PROGRESS, "2026-10-22T12:00:10Z")
+        viewModel.applyTraceSnapshot(trace(listOf("908"), listOf(own)))
+        assertEquals("908", viewModel.routingRequest.first()?.key?.routeId)
 
         viewModel.disconnect()
         // A new demo connection may immediately select its own live route, but the
@@ -182,19 +185,18 @@ class RequestSelectionStateTest {
     @Test
     fun runningRequestIsGlobalWhileRoutingFocusStaysInSelectedGroup() = runBlocking {
         val viewModel = newViewModel()
-        viewModel.selectGroupId("free-deepseek4.1")
         val other = request("905", "daily-coding", FinalState.IN_PROGRESS, "2026-10-22T12:00:09Z")
 
         viewModel.applyTraceSnapshot(trace(listOf("905"), listOf(other)))
 
         assertEquals("905", viewModel.runningRequest.first()?.key?.routeId)
-        assertTrue(viewModel.routingRequest.first()?.key?.routeId != "905")
+        assertEquals("905", viewModel.routingRequest.first()?.key?.routeId)
+        assertEquals("daily-coding", viewModel.selectedGroupId.first())
     }
 
     @Test
     fun restartedTraceWithOnlyOtherGroupClearsLiveRoutingFocus() = runBlocking {
         val viewModel = newViewModel()
-        viewModel.selectGroupId("free-deepseek4.1")
         val running = request("906", "free-deepseek4.1", FinalState.IN_PROGRESS, "2026-10-22T12:00:09Z")
         viewModel.applyTraceSnapshot(trace(listOf("906"), listOf(running)))
         assertEquals("906", viewModel.routingRequest.first()?.key?.routeId)
@@ -204,16 +206,15 @@ class RequestSelectionStateTest {
             trace(listOf("907"), listOf(other)).copy(epoch = "e2", restarted = true)
         )
 
-        assertNull(viewModel.routingRequest.first())
-        assertNull(viewModel.routingDetail.first())
-        assertNull(viewModel.selectedRequest.first())
-        assertNull(viewModel.selectedRequestDetail.first())
+        // Restart must auto-follow the current epoch, never the previous group's route.
+        assertEquals("907", viewModel.routingRequest.first()?.key?.routeId)
+        assertEquals("daily-coding", viewModel.selectedGroupId.first())
+        assertTrue(viewModel.isFollowingLive.first())
     }
 
     @Test
     fun retryMovesFocusToActualNextAccount() = runBlocking {
         val viewModel = newViewModel()
-        viewModel.selectGroupId("free-deepseek4.1")
         val retried = request(
             "903", "free-deepseek4.1", FinalState.IN_PROGRESS, "2026-10-22T12:00:09Z",
             attempts = listOf(
@@ -231,7 +232,6 @@ class RequestSelectionStateTest {
         val viewModel = newViewModel()
         val page = viewModel.requestsPage.first { it != null }!!
         val historical = page.items.first { it.key.routeId == "102" }
-        viewModel.selectGroupId("free-deepseek4.1")
         viewModel.selectRequest(historical)
         val modalBefore = viewModel.selectedRequestDetail.first()
         assertNotNull(modalBefore)
@@ -280,9 +280,66 @@ class RequestSelectionStateTest {
         assertEquals(trace.recentRoutes.first().key, trace.recentDetails.first().summary.key)
     }
 
+    @Test
+    fun directHistoricalSelectionClearsThePreviousGroup() = runBlocking {
+        val viewModel = newViewModel()
+        val direct = request("direct-1", null, FinalState.SUCCEEDED, "2026-10-22T12:00:00Z")
+
+        viewModel.selectRoutingRequest(direct)
+        assertNull(viewModel.selectedGroupId.first())
+
+        val grouped = request("grouped-1", "daily-coding", FinalState.SUCCEEDED, "2026-10-22T12:00:01Z")
+        viewModel.selectRoutingRequest(grouped)
+        assertEquals("daily-coding", viewModel.selectedGroupId.first())
+        viewModel.selectRequest(direct)
+        assertNull(viewModel.selectedGroupId.first())
+    }
+
+    @Test
+    fun legacyRestartDetachesHistoricalDetailWithoutRebindingOnLaterSnapshots() = runBlocking {
+        val viewModel = newViewModel()
+        val old = request("reused", "old-group", FinalState.SUCCEEDED, "2026-10-22T12:00:00Z")
+            .copy(key = RequestKey("demo-main", "", "reused"), servedModel = "historical-model")
+        val oldDetail = detailFor(old, contextTokens = 10L, evidence = "old evidence")
+        viewModel.applyTraceSnapshot(
+            trace(emptyList(), listOf(old), details = listOf(oldDetail)).copy(epoch = "")
+        )
+        viewModel.selectRoutingRequest(old)
+        assertEquals("old evidence", viewModel.routingDetail.first()?.decisionEvidence?.single())
+
+        val replacement = old.copy(groupId = "new-group", servedModel = "different-model")
+        val replacementDetail = detailFor(replacement, contextTokens = 20L, evidence = "new evidence")
+        viewModel.applyTraceSnapshot(
+            TraceSnapshot(
+                epoch = "",
+                seq = 1,
+                restarted = true,
+                recentRoutes = listOf(replacement),
+                recentDetails = listOf(replacementDetail)
+            )
+        )
+
+        assertEquals("historical-model", viewModel.routingRequest.first()?.servedModel)
+        assertEquals("old-group", viewModel.selectedGroupId.first())
+        assertNull(viewModel.routingDetail.first())
+
+        viewModel.applyTraceSnapshot(
+            TraceSnapshot(
+                epoch = "",
+                seq = 2,
+                recentRoutes = listOf(replacement),
+                recentDetails = listOf(replacementDetail)
+            )
+        )
+
+        assertEquals("historical-model", viewModel.routingRequest.first()?.servedModel)
+        assertEquals("old-group", viewModel.selectedGroupId.first())
+        assertNull(viewModel.routingDetail.first())
+    }
+
     private fun request(
         id: String,
-        groupId: String,
+        groupId: String?,
         state: FinalState,
         startedAt: String,
         attempts: List<Attempt> = emptyList()
@@ -366,5 +423,9 @@ private class FakePreferencesManager : DisplayPreferencesSource {
 
     override suspend fun updateMaskAccounts(enabled: Boolean) {
         state.value = state.value.copy(maskAccountNames = enabled)
+    }
+
+    override suspend fun updateKeepLiveConnectionInBackground(enabled: Boolean) {
+        state.value = state.value.copy(keepLiveConnectionInBackground = enabled)
     }
 }
